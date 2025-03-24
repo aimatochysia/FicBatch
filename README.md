@@ -1,5 +1,5 @@
 # directory:
-<p>
+<code>
 /FicBatch
   ├── /assets
   │   ├── icon.png
@@ -17,10 +17,12 @@
   ├── app.json
   App.js
   index.js
-</p>
+</code>
 
 ## to start:
-<p>npm install -g expo-cli
+<code>
+npm install -g expo-cli
 npm install
 npx expo install
-npx expo start -c</p>
+npx expo start -c   
+</code>
