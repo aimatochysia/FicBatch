@@ -14,7 +14,6 @@ const ReaderScreen = ({ route }) => {
         console.log(`📖 Attempting to read: ${filePath}`);
     
         const formattedPath = filePath.startsWith('file://') ? filePath : 'file://' + filePath;
-
     
         const fileContent = await FileSystem.readAsStringAsync(formattedPath, { encoding: FileSystem.EncodingType.UTF8 });
         setHtmlContent(fileContent);
