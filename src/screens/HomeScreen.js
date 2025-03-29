@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   View,
   Text,
@@ -12,14 +12,15 @@ import {
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { downloadAO3Work } from '../utils/downloader'
+import { Ionicons } from '@expo/vector-icons'
 
 const HomeScreen = ({ navigation }) => {
   const [links, setLinks] = useState('')
   const [downloadQueue, setDownloadQueue] = useState([])
   const [isDownloading, setIsDownloading] = useState(false)
   const [darkMode, setDarkMode] = useState(false)
+  const scrollViewRef = useRef(null)
 
-  // Load mode preference on mount.
   useEffect(() => {
     ;(async () => {
       const savedMode = await AsyncStorage.getItem('darkMode')
@@ -29,14 +30,12 @@ const HomeScreen = ({ navigation }) => {
     })()
   }, [])
 
-  // Toggle dark/light mode and persist it.
   const toggleMode = async () => {
     const newMode = !darkMode
     setDarkMode(newMode)
     await AsyncStorage.setItem('darkMode', newMode.toString())
   }
 
-  // Parse input text into a list of link objects.
   const parseLinks = text => {
     const linkArray = text.split(/\s+/).filter(link => link)
     return linkArray.map((link, index) => ({
@@ -52,34 +51,35 @@ const HomeScreen = ({ navigation }) => {
     setDownloadQueue(items)
   }
 
+  const handleClearInput = () => {
+    setLinks('')
+    setDownloadQueue([])
+  }
+
   const handleDownload = async () => {
     if (!links.trim()) {
       Alert.alert('Error', 'Enter at least one link.')
       return
     }
 
-    // Reset statuses to pending and mark as downloading.
     const items = parseLinks(links)
     setDownloadQueue(items)
     setIsDownloading(true)
 
-    // Process each link sequentially.
     for (const item of items) {
-      // Update status to downloading.
       setDownloadQueue(queue =>
         queue.map(q => (q.id === item.id ? { ...q, status: 'downloading' } : q))
       )
+      scrollViewRef.current?.scrollToEnd({ animated: true })
 
       try {
         await downloadAO3Work(item.link)
-        // Update status to downloaded.
         setDownloadQueue(queue =>
           queue.map(q =>
             q.id === item.id ? { ...q, status: 'downloaded' } : q
           )
         )
       } catch (error) {
-        // Update status to error.
         setDownloadQueue(queue =>
           queue.map(q => (q.id === item.id ? { ...q, status: 'error' } : q))
         )
@@ -90,7 +90,6 @@ const HomeScreen = ({ navigation }) => {
     Alert.alert('Download Complete', 'All works have been processed.')
   }
 
-  // Dynamic styles based on dark mode.
   const dynamicStyles = StyleSheet.create({
     container: {
       padding: 20,
@@ -108,15 +107,31 @@ const HomeScreen = ({ navigation }) => {
       marginBottom: 10,
       color: darkMode ? '#e0e0e0' : '#333333'
     },
+    inputContainer: {
+      position: 'relative',
+      marginBottom: 15
+    },
     input: {
       borderWidth: 1,
       borderColor: darkMode ? '#444' : '#ccc',
       padding: 10,
-      marginBottom: 15,
       height: 120,
       textAlignVertical: 'top',
       backgroundColor: darkMode ? '#1e1e1e' : '#ffffff',
       color: darkMode ? '#ffffff' : '#000000'
+    },
+    clearButton: {
+      position: 'absolute',
+      right: 10,
+      top: 10,
+      backgroundColor: darkMode ? '#444' : '#ccc',
+      padding: 5,
+      borderRadius: 5
+    },
+    clearButtonText: {
+      color: darkMode ? '#fff' : '#000',
+      fontSize: 12,
+      fontWeight: 'bold'
     },
     buttonContainer: {
       flexDirection: 'row',
@@ -124,7 +139,10 @@ const HomeScreen = ({ navigation }) => {
       marginBottom: 20
     },
     queueContainer: {
-      marginTop: 20
+      marginTop: 20,
+      backgroundColor: darkMode ? '#1e1e1e' : '#ffffff',
+      padding: 10,
+      borderRadius: 5
     },
     queueHeader: {
       fontSize: 18,
@@ -135,7 +153,10 @@ const HomeScreen = ({ navigation }) => {
     queueItem: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginBottom: 10
+      marginBottom: 10,
+      backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+      padding: 10,
+      borderRadius: 5
     },
     queueText: {
       flex: 1,
@@ -143,15 +164,16 @@ const HomeScreen = ({ navigation }) => {
     },
     statusText: {
       marginLeft: 10,
-      fontWeight: 'bold'
+      fontWeight: 'bold',
+      color: darkMode ? '#e0e0e0' : '#333333'
     },
     success: { color: 'green' },
     error: { color: 'red' },
-    toggleButton: {
+    settingsButton: {
+      alignSelf: 'flex-end',
       marginBottom: 15,
       padding: 10,
       backgroundColor: darkMode ? '#333' : '#ddd',
-      alignItems: 'center',
       borderRadius: 5
     },
     toggleText: {
@@ -161,27 +183,40 @@ const HomeScreen = ({ navigation }) => {
   })
 
   return (
-    <ScrollView contentContainerStyle={dynamicStyles.container}>
-      <TouchableOpacity style={dynamicStyles.toggleButton} onPress={toggleMode}>
-        <Text style={dynamicStyles.toggleText}>
-          Switch to {darkMode ? 'Light' : 'Dark'} Mode
-        </Text>
+    <View style={dynamicStyles.container}>
+      <TouchableOpacity
+        style={dynamicStyles.settingsButton}
+        onPress={toggleMode}
+      >
+        <Ionicons
+          name={darkMode ? 'moon' : 'sunny'}
+          size={24}
+          color={darkMode ? '#fff' : '#000'}
+        />
       </TouchableOpacity>
-      {/*need to change!!!!❌❌❌ */}
-      <Text style={dynamicStyles.header}>FicBatch</Text>
-      <Text style={dynamicStyles.Text}>made by: Mikaela Petra</Text>
+      <Text style={dynamicStyles.instructions}>made by: Mikaela Petra</Text>
       <Text style={dynamicStyles.instructions}>
         Paste one or multiple AO3 links below (links can be space- or
         line-separated):
       </Text>
-      <TextInput
-        multiline
-        style={dynamicStyles.input}
-        value={links}
-        onChangeText={handleLinksChange}
-        placeholder='Enter AO3 links / id here... (e.g., https://archiveofourown.org/works/12345678 || 12345678 || https://archiveofourown.org/works/12345678/chapters/12345678)'
-        placeholderTextColor={darkMode ? '#aaa' : '#666'}
-      />
+      <View style={dynamicStyles.inputContainer}>
+        <TextInput
+          multiline
+          style={dynamicStyles.input}
+          value={links}
+          onChangeText={handleLinksChange}
+          placeholder='Enter AO3 links / id here... (e.g., https://archiveofourown.org/works/12345678 || 12345678 || https://archiveofourown.org/works/12345678/chapters/12345678)'
+          placeholderTextColor={darkMode ? '#aaa' : '#666'}
+        />
+        {links.trim() !== '' && (
+          <TouchableOpacity
+            style={dynamicStyles.clearButton}
+            onPress={handleClearInput}
+          >
+            <Text style={dynamicStyles.clearButtonText}>Clear</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <View style={dynamicStyles.buttonContainer}>
         <Button
           title='Download'
@@ -194,7 +229,10 @@ const HomeScreen = ({ navigation }) => {
         />
       </View>
 
-      <View style={dynamicStyles.queueContainer}>
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={dynamicStyles.queueContainer}
+      >
         <Text style={dynamicStyles.queueHeader}>Download Queue:</Text>
         {downloadQueue.map(item => (
           <View key={item.id} style={dynamicStyles.queueItem}>
@@ -215,8 +253,8 @@ const HomeScreen = ({ navigation }) => {
             </View>
           </View>
         ))}
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   )
 }
 
