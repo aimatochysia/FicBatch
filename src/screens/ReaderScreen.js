@@ -7,7 +7,8 @@ import {
   StyleSheet,
   Switch,
   ScrollView,
-  Animated
+  Animated,
+  Alert
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { WebView } from 'react-native-webview'
@@ -15,7 +16,7 @@ import * as FileSystem from 'expo-file-system'
 import { Picker } from '@react-native-picker/picker'
 import { Ionicons } from '@expo/vector-icons'
 import Slider from '@react-native-community/slider'
-import { Alert } from 'react-native'
+import { Easing } from 'react-native'
 const SETTINGS_KEY = 'reader_settings'
 const PROGRESS_KEY = 'reading_progress'
 
@@ -24,14 +25,16 @@ const ReaderScreen = ({ route }) => {
   const [htmlContent, setHtmlContent] = useState('')
   const [modalVisible, setModalVisible] = useState(false)
   const [menuVisible, setMenuVisible] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const [theme, settheme] = useState(false)
   const [fontSize, setFontSize] = useState(16)
   const [fontFamily, setFontFamily] = useState('serif')
   const [textColor, setTextColor] = useState('#000')
   const [chapters, setChapters] = useState([])
+  const [isFirstLoad, setIsFirstLoad] = useState(true)
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true)
   const webViewRef = useRef(null)
   const slideAnim = useRef(new Animated.Value(-250)).current
-
+  const overlayOpacity = useRef(new Animated.Value(0)).current
   useEffect(() => {
     const loadFile = async () => {
       try {
@@ -49,18 +52,14 @@ const ReaderScreen = ({ route }) => {
     }
     loadFile()
     loadSettings()
-    loadProgress()
   }, [filePath])
-  useEffect(() => {
-    const autoSaveInterval = setInterval(saveProgress, 6000)
-    return () => clearInterval(autoSaveInterval)
-  }, [htmlContent])
 
   useEffect(() => {
-    const saveProgressInterval = setInterval(saveProgress, 300000)
-    return () => clearInterval(saveProgressInterval)
-  }, [htmlContent])
-
+    if (autoSaveEnabled) {
+      const autoSaveInterval = setInterval(saveProgress, 6000)
+      return () => clearInterval(autoSaveInterval)
+    }
+  }, [htmlContent, autoSaveEnabled])
   const extractChapters = html => {
     const regex = /<(h[1-4])(?:[^>]*)>(.*?)<\/\1>/gi
     let foundChapters = []
@@ -75,29 +74,38 @@ const ReaderScreen = ({ route }) => {
   const loadSettings = async () => {
     const savedSettings = await AsyncStorage.getItem(SETTINGS_KEY)
     if (savedSettings) {
-      const { darkMode, fontSize, fontFamily, textColor } =
+      const { theme, fontSize, fontFamily, textColor, autoSaveEnabled } =
         JSON.parse(savedSettings)
-      setDarkMode(darkMode)
+      settheme(theme)
       setFontSize(fontSize)
       setFontFamily(fontFamily)
       setTextColor(textColor)
+      setAutoSaveEnabled(autoSaveEnabled ?? true)
     }
   }
 
   const saveSettings = async () => {
     await AsyncStorage.setItem(
       SETTINGS_KEY,
-      JSON.stringify({ darkMode, fontSize, fontFamily, textColor })
+      JSON.stringify({
+        theme,
+        fontSize,
+        fontFamily,
+        textColor,
+        autoSaveEnabled
+      })
     )
   }
 
   const loadProgress = async () => {
-    const savedProgress = await AsyncStorage.getItem(PROGRESS_KEY)
-    if (savedProgress && webViewRef.current) {
+    if (isFirstLoad && webViewRef.current) {
       webViewRef.current.injectJavaScript(
-        `window.scrollTo(0, ${savedProgress});`
+        `window.scrollTo(0, ${
+          (await AsyncStorage.getItem(PROGRESS_KEY)) || 0
+        }); true;`
       )
-      console.log('loaded progress:', savedProgress)
+      console.log('Progress loaded on first load')
+      setIsFirstLoad(false)
     }
   }
 
@@ -113,7 +121,7 @@ const ReaderScreen = ({ route }) => {
   const handleMessage = event => {
     const progress = event.nativeEvent.data
     console.log('saved progress:', progress)
-    AsyncStorage.setItem(PROGRESS_KEY, event.nativeEvent.data)
+    AsyncStorage.setItem(PROGRESS_KEY, progress)
   }
 
   const scrollToChapter = chapterId => {
@@ -137,8 +145,8 @@ const ReaderScreen = ({ route }) => {
 
   const injectedCSS = `
     <style>
-      body { background-color: ${darkMode ? '#121212' : '#fff'}; color: ${
-    darkMode ? '#eee' : textColor
+      body { background-color: ${theme ? '#121212' : '#fff'}; color: ${
+    theme ? '#eee' : textColor
   }; }
       .userstuff { font-size: ${fontSize}px; font-family: ${fontFamily}; }
       h1, h2, h3, h4 { scroll-margin-top: 20px; }
@@ -153,13 +161,41 @@ const ReaderScreen = ({ route }) => {
     </script>
   `
 
+  const updateWebViewStyles = () => {
+    if (webViewRef.current) {
+      const jsCode = `
+        (function() {
+          document.body.style.backgroundColor = "${theme ? '#121212' : '#fff'}";
+          document.body.style.color = "${theme ? '#eee' : textColor}";
+          document.body.style.fontSize = "${fontSize}px";
+          document.body.style.fontFamily = "${fontFamily}";
+        })();
+      `
+      webViewRef.current.injectJavaScript(jsCode)
+    }
+  }
+
+  useEffect(() => {
+    updateWebViewStyles()
+  }, [theme, fontSize, fontFamily, textColor])
+
   const toggleMenu = () => {
-    Animated.timing(slideAnim, {
-      toValue: menuVisible ? -250 : 0,
-      duration: 300,
-      useNativeDriver: true
-    }).start()
-    setMenuVisible(!menuVisible)
+    const isOpening = !menuVisible
+    setMenuVisible(isOpening)
+
+    Animated.parallel([
+      Animated.timing(slideAnim, {
+        toValue: isOpening ? 0 : -250,
+        duration: 300,
+        easing: isOpening ? Easing.out(Easing.ease) : Easing.in(Easing.ease),
+        useNativeDriver: true
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: isOpening ? 1 : 0,
+        duration: 300,
+        useNativeDriver: true
+      })
+    ]).start()
   }
 
   return (
@@ -170,6 +206,9 @@ const ReaderScreen = ({ route }) => {
           source={{ html: injectedCSS + htmlContent }}
           style={{ flex: 1 }}
           onMessage={handleMessage}
+          onLoadEnd={() => {
+            if (isFirstLoad) loadProgress()
+          }}
         />
       ) : (
         <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading...</Text>
@@ -179,23 +218,39 @@ const ReaderScreen = ({ route }) => {
         <Ionicons name='menu' size={24} color='white' />
       </TouchableOpacity>
 
-      <Animated.View
-        style={[
-          styles.menuContainer,
-          { transform: [{ translateX: slideAnim }] }
-        ]}
-      >
-        <ScrollView>
-          {chapters.map((chapter, index) => (
-            <TouchableOpacity
-              key={index}
-              onPress={() => scrollToChapter(chapter.id)}
-            >
-              <Text style={styles.chapterItem}>{chapter.text}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </Animated.View>
+      {menuVisible && (
+        <TouchableOpacity
+          style={styles.overlay}
+          activeOpacity={1}
+          onPress={toggleMenu}
+        >
+          <Animated.View
+            style={[
+              styles.menuContainer,
+              { backgroundColor: theme ? '#444' : '#ddd' },
+              { transform: [{ translateX: slideAnim }] }
+            ]}
+          >
+            <ScrollView>
+              {chapters.map((chapter, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => scrollToChapter(chapter.id)}
+                >
+                  <Text
+                    style={[
+                      styles.chapterItem,
+                      { color: theme ? '#fff' : '#000' }
+                    ]}
+                  >
+                    {chapter.text}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </Animated.View>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         style={styles.floatingButton}
@@ -206,66 +261,91 @@ const ReaderScreen = ({ route }) => {
 
       <Modal visible={modalVisible} transparent={true} animationType='fade'>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Settings</Text>
-
-            {/* darkmode */}
+          <View style={[styles.modalContent, theme && styles.modalContentDark]}>
+            <Text style={[styles.modalTitle, theme && styles.modalTitleDark]}>
+              Settings
+            </Text>
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Dark Mode</Text>
+              <Text
+                style={[styles.settingLabel, theme && styles.settingLabelDark]}
+              >
+                Dark Mode
+              </Text>
               <Switch
-                value={darkMode}
-                onValueChange={value => setDarkMode(value)}
+                value={theme}
+                onValueChange={value => {
+                  settheme(value)
+                  updateWebViewStyles()
+                }}
               />
             </View>
-
-            {/* font size */}
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Font Size: {fontSize}px</Text>
+              <Text
+                style={[styles.settingLabel, theme && styles.settingLabelDark]}
+              >
+                Autosave
+              </Text>
+              <Switch
+                value={autoSaveEnabled}
+                onValueChange={value => setAutoSaveEnabled(value)}
+              />
+            </View>
+            <View style={styles.settingItem}>
+              <Text
+                style={[styles.settingLabel, theme && styles.settingLabelDark]}
+              >
+                Font Size: {fontSize}px
+              </Text>
               <Slider
                 style={{ flex: 1 }}
-                minimumValue={5}
+                minimumValue={10}
                 maximumValue={100}
                 value={fontSize}
-                step={1}
+                step={2}
                 onSlidingComplete={value => {
                   const roundedValue = Math.round(value)
                   setFontSize(roundedValue)
-                  if (webViewRef.current) {
-                    const jsCode = `
-                    (function() {
-                      document.body.style.fontSize = "${roundedValue}px";
-                    })();
-                  `
-                    webViewRef.current.injectJavaScript(jsCode)
-                  }
+                  updateWebViewStyles()
                 }}
-                minimumTrackTintColor='#007AFF'
-                maximumTrackTintColor='#000'
+                minimumTrackTintColor={theme ? '#BBB' : '#007AFF'}
+                maximumTrackTintColor={theme ? '#444' : '#000'}
               />
             </View>
 
-            {/* Font */}
-            <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Font Family</Text>
+            {/* <View style={styles.settingItem}>
+              <Text
+                style={[styles.settingLabel, theme && styles.settingLabelDark]}
+              >
+                Font Family
+              </Text>
               <Picker
-                style={styles.picker}
+                style={[styles.picker, theme && styles.pickerDark]}
                 selectedValue={fontFamily}
-                onValueChange={value => setFontFamily(value)}
+                onValueChange={value => {
+                  setFontFamily(value)
+                  updateWebViewStyles()
+                }}
                 mode='dropdown'
               >
                 <Picker.Item label='Serif' value='serif' />
                 <Picker.Item label='Sans-serif' value='sans-serif' />
                 <Picker.Item label='Monospace' value='monospace' />
               </Picker>
-            </View>
+            </View> */}
 
-            {/* text color */}
-            <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Text Color</Text>
+            {/* <View style={styles.settingItem}>
+              <Text
+                style={[styles.settingLabel, theme && styles.settingLabelDark]}
+              >
+                Text Color
+              </Text>
               <Picker
-                style={styles.picker}
+                style={[styles.picker, theme && styles.pickerDark]}
                 selectedValue={textColor}
-                onValueChange={value => setTextColor(value)}
+                onValueChange={value => {
+                  setTextColor(value)
+                  updateWebViewStyles()
+                }}
                 mode='dropdown'
               >
                 <Picker.Item label='Black' value='#000000' />
@@ -274,11 +354,9 @@ const ReaderScreen = ({ route }) => {
                 <Picker.Item label='Blue' value='#0000ff' />
                 <Picker.Item label='Green' value='#008000' />
               </Picker>
-            </View>
+            </View> */}
 
-            {/* progress buttons */}
             <View style={styles.progressButtonContainer}>
-              {/* save */}
               <TouchableOpacity
                 style={[styles.progressButton, { backgroundColor: 'green' }]}
                 onPress={() => {
@@ -289,18 +367,16 @@ const ReaderScreen = ({ route }) => {
                 <Text style={styles.progressButtonText}>Save</Text>
               </TouchableOpacity>
 
-              {/* load */}
               <TouchableOpacity
                 style={[styles.progressButton, { backgroundColor: 'blue' }]}
                 onPress={() => {
                   loadProgress()
-                  console.log('Progress loaded')
+                  console.log('Progress loaded manually')
                 }}
               >
                 <Text style={styles.progressButtonText}>Load</Text>
               </TouchableOpacity>
 
-              {/* reset */}
               <TouchableOpacity
                 style={[styles.progressButton, { backgroundColor: 'red' }]}
                 onPress={() => {
@@ -335,13 +411,20 @@ const ReaderScreen = ({ route }) => {
             </View>
 
             <TouchableOpacity
-              style={styles.closeButton}
+              style={[styles.closeButton, theme && styles.closeButtonDark]}
               onPress={() => {
                 setModalVisible(false)
                 saveSettings()
               }}
             >
-              <Text style={styles.closeButtonText}>Close</Text>
+              <Text
+                style={[
+                  styles.closeButtonText,
+                  theme && styles.closeButtonTextDark
+                ]}
+              >
+                Close
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -355,7 +438,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 40,
     left: 20,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#444',
     padding: 12,
     borderRadius: 30,
     elevation: 5
@@ -375,18 +458,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#555'
   },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-start'
+  },
   floatingButton: {
     position: 'absolute',
     top: 40,
     right: 20,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#555',
     padding: 12,
     borderRadius: 30,
     elevation: 5
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)', // semi-transparent overlay
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -397,11 +489,18 @@ const styles = StyleSheet.create({
     padding: 20,
     elevation: 10
   },
+  modalContentDark: {
+    backgroundColor: '#222'
+  },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: 'center'
+    textAlign: 'center',
+    color: '#000'
+  },
+  modalTitleDark: {
+    color: '#fff'
   },
   settingItem: {
     flexDirection: 'row',
@@ -410,10 +509,18 @@ const styles = StyleSheet.create({
     marginBottom: 15
   },
   settingLabel: {
-    fontSize: 16
+    fontSize: 16,
+    color: '#000'
+  },
+  settingLabelDark: {
+    color: '#fff'
   },
   picker: {
     width: 120
+  },
+  pickerDark: {
+    color: '#fff',
+    backgroundColor: '#333'
   },
   closeButton: {
     marginTop: 20,
@@ -422,10 +529,16 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     alignItems: 'center'
   },
+  closeButtonDark: {
+    backgroundColor: '#444'
+  },
   closeButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold'
+  },
+  closeButtonTextDark: {
+    color: '#bbb'
   },
   progressButtonContainer: {
     flexDirection: 'row',

@@ -30,7 +30,7 @@ npx expo start -c
 npm install -g eas-cli
 
 eas build:configure
-eas build -p android || eas build
+eas build -p android || eas build || eas build --platform android --profile production
 eas submit to submit to mobile stores
 </code>
 

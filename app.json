@@ -2,9 +2,7 @@
   "expo": {
     "name": "FicBatch",
     "slug": "FicBatch",
-    "platforms": [
-      "android"
-    ],
+    "platforms": ["android"],
     "version": "0.5.0",
     "sdkVersion": "52.0.0",
     "icon": "./assets/logo.png",
