@@ -1,0 +1,46 @@
+name: ficbatch
+description: Cross-platform downloader & HTML reader
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State & persistence
+  provider: ^6.1.2
+  shared_preferences: ^2.3.2
+
+  # IO, paths, http
+  http: ^1.2.2
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  permission_handler: ^12.0.1
+  file_selector: ^1.0.3
+
+  # Watching folders (desktop); mobile will use polling fallback
+  watcher: ^1.1.0
+
+  # HTML viewing & JS bridge
+  flutter_inappwebview: ^6.0.0
+
+  # Parsing HTML for metadata/tags
+  html: ^0.15.4
+
+  # Pretty timestamps
+  intl: ^0.20.2
+
+  # Neumorphic UI
+  flutter_neumorphic: ^3.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
