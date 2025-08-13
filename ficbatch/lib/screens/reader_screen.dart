@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_neumorphic/flutter_neumorphic.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic_plus.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 import 'package:path/path.dart' as p;
@@ -48,7 +48,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _startAutosaveTimer() {
     final settings = context.read<SettingsService>();
     _autoTimer?.cancel();
-    _autoTimer = Timer.periodic(Duration(seconds: settings.autosaveSeconds), (_) => _saveProgress());
+    _autoTimer = Timer.periodic(
+        Duration(seconds: settings.autosaveSeconds), (_) => _saveProgress());
   }
 
   Future<void> _saveProgress() async {
@@ -84,13 +85,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final p25 = (pct >= 0.25 && pct < 0.26);
       final p50 = (pct >= 0.50 && pct < 0.51);
       if (p25 || p50) {
-        hist.add(LogKind.progress, id: w.id, title: w.title,
-            extra: "[PROGRESSES] ${(pct * 100).toStringAsFixed(0)}% in ${w.title} - ${w.id}");
+        hist.add(LogKind.progress,
+            id: w.id,
+            title: w.title,
+            extra:
+                "[PROGRESSES] ${(pct * 100).toStringAsFixed(0)}% in ${w.title} - ${w.id}");
       }
 
       if (pct >= 0.99) {
-        hist.add(LogKind.finished, id: w.id, title: w.title,
-            extra: "[FINISHED] ${w.title} - ${w.id}");
+        hist.add(LogKind.finished,
+            id: w.id, title: w.title, extra: "[FINISHED] ${w.title} - ${w.id}");
       }
     } catch (_) {}
   }
@@ -98,7 +102,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _restoreScroll(WorkItem w) async {
     if (_web == null) return;
     if (w.lastScrollY > 0) {
-      await _web!.evaluateJavascript(source: "window.scrollTo(0, ${w.lastScrollY});");
+      await _web!
+          .evaluateJavascript(source: "window.scrollTo(0, ${w.lastScrollY});");
     }
   }
 
@@ -112,7 +117,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     document.head.appendChild(style);
     return style;
   })();
-  s.textContent = `html, body { font-size: ${ (scale * 100).toStringAsFixed(0) }% !important; line-height: 1.6; }`;
+  s.textContent = `html, body { font-size: ${(scale * 100).toStringAsFixed(0)}% !important; line-height: 1.6; }`;
 })();
 """);
   }
@@ -135,7 +140,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
 """);
     if (res is List) {
       setState(() {
-        _chapters = res.map((e) => {'title': e['title'], 'id': e['id']}).cast<Map<String,String>>().toList();
+        _chapters = res
+            .map((e) => {'title': e['title'], 'id': e['id']})
+            .cast<Map<String, String>>()
+            .toList();
       });
     }
   }
@@ -191,33 +199,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 _progressUpdateQuick();
               },
             ),
-            if (_chaptersOpen) Positioned.fill(
-              child: GestureDetector(
-                onTap: () => setState(() => _chaptersOpen = false),
-                child: Container(color: Colors.black.withOpacity(0.2)),
-              ),
-            ),
-            if (_chaptersOpen) Align(
-              alignment: Alignment.topLeft,
-              child: Container(
-                width: 300,
-                height: double.infinity,
-                color: Theme.of(context).cardColor,
-                child: ListView.builder(
-                  itemCount: _chapters.length,
-                  itemBuilder: (_, i) {
-                    final ch = _chapters[i];
-                    return ListTile(
-                      title: Text(ch['title']!),
-                      onTap: () async {
-                        await _web?.evaluateJavascript(source: "document.getElementById('${ch['id']}')?.scrollIntoView();");
-                        setState(() => _chaptersOpen = false);
-                      },
-                    );
-                  },
+            if (_chaptersOpen)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => setState(() => _chaptersOpen = false),
+                  child: Container(color: Colors.black.withOpacity(0.2)),
                 ),
               ),
-            ),
+            if (_chaptersOpen)
+              Align(
+                alignment: Alignment.topLeft,
+                child: Container(
+                  width: 300,
+                  height: double.infinity,
+                  color: Theme.of(context).cardColor,
+                  child: ListView.builder(
+                    itemCount: _chapters.length,
+                    itemBuilder: (_, i) {
+                      final ch = _chapters[i];
+                      return ListTile(
+                        title: Text(ch['title']!),
+                        onTap: () async {
+                          await _web?.evaluateJavascript(
+                              source:
+                                  "document.getElementById('${ch['id']}')?.scrollIntoView();");
+                          setState(() => _chaptersOpen = false);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -236,7 +248,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   return y/max;
 })()
 """);
-      if (res is num) setState(() => _progress = res.toDouble().clamp(0.0, 1.0));
+      if (res is num)
+        setState(() => _progress = res.toDouble().clamp(0.0, 1.0));
     } catch (_) {}
   }
 }
@@ -267,15 +280,18 @@ class _ReaderSettingsState extends State<_ReaderSettings> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Reader Settings', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('Reader Settings',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           Row(
             children: [
               const Text('Font size'),
               Expanded(
                 child: Slider(
-                  min: 0.6, max: 2.0, divisions: 14,
+                  min: 0.6,
+                  max: 2.0,
+                  divisions: 14,
                   value: _scale,
-                  label: '${(_scale*100).toStringAsFixed(0)}%',
+                  label: '${(_scale * 100).toStringAsFixed(0)}%',
                   onChanged: (v) => setState(() => _scale = v),
                 ),
               ),
@@ -292,7 +308,9 @@ class _ReaderSettingsState extends State<_ReaderSettings> {
               const SizedBox(width: 8),
               DropdownButton<int>(
                 value: _secs,
-                items: const [5,10,15,20,30].map((e)=>DropdownMenuItem(value:e, child: Text('$e s'))).toList(),
+                items: const [5, 10, 15, 20, 30]
+                    .map((e) => DropdownMenuItem(value: e, child: Text('$e s')))
+                    .toList(),
                 onChanged: (v) => setState(() => _secs = v ?? _secs),
               ),
             ],

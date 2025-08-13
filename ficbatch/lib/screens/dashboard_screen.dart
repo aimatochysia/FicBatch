@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_neumorphic/flutter_neumorphic.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic_plus.dart';
 import 'package:provider/provider.dart';
 import '../services/download_service.dart';
 import '../services/history_service.dart';
@@ -59,28 +59,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text('Queue', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             ...downloader.queue.map((t) => Neumorphic(
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Expanded(child: Text('ID: ${t.id}')),
-                  Text(t.status.toUpperCase()),
-                  if (t.error != null) ...[
-                    const SizedBox(width: 8),
-                    const Icon(Icons.error, color: Colors.red),
-                  ]
-                ],
-              ),
-            )),
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text('ID: ${t.id}')),
+                      Text(t.status.toUpperCase()),
+                      if (t.error != null) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.error, color: Colors.red),
+                      ]
+                    ],
+                  ),
+                )),
             const SizedBox(height: 16),
-            Text('Recent Activity', style: Theme.of(context).textTheme.titleMedium),
+            Text('Recent Activity',
+                style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             ...history.logs.take(12).map((e) => Neumorphic(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              padding: const EdgeInsets.all(10),
-              style: const NeumorphicStyle(depth: -2),
-              child: Text(e.message),
-            )),
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  padding: const EdgeInsets.all(10),
+                  style: const NeumorphicStyle(depth: -2),
+                  child: Text(e.message),
+                )),
           ],
         ),
       ),
