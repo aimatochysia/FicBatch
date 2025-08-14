@@ -1,6 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_neumorphic/flutter_neumorphic.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 
 import 'services/settings_service.dart';
 import 'services/download_service.dart';
