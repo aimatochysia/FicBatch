@@ -40,9 +40,14 @@ class DownloadService with ChangeNotifier {
 
   Future<void> addFromInput(String input) async {
     // extract all digit groups as IDs
-    final ids = RegExp(r'\d+').allMatches(input).map((m) => m.group(0)!).toSet().toList();
+    final ids = RegExp(r'\d+')
+        .allMatches(input)
+        .map((m) => m.group(0)!)
+        .toSet()
+        .toList();
     for (final id in ids) {
-      if (_queue.indexWhere((t) => t.id == id) == -1) _queue.add(DownloadTask(id));
+      if (_queue.indexWhere((t) => t.id == id) == -1)
+        _queue.add(DownloadTask(id));
     }
     notifyListeners();
     _processQueue();
@@ -76,12 +81,16 @@ class DownloadService with ChangeNotifier {
 
   Future<void> _downloadWork(String workId) async {
     // AO3-like pattern per your JS reference
-    final url = Uri.parse('https://archiveofourown.org/downloads/$workId/a.html?updated_at=1738557260');
+    final url = Uri.parse(
+        'https://archiveofourown.org/downloads/$workId/a.html?updated_at=1738557260');
 
-    history.add(LogKind.started, id: workId, title: null, extra: "[STARTED] $workId");
+    history.add(LogKind.started,
+        id: workId, title: null, extra: "[STARTED] $workId");
     final res = await http.get(url);
     if (res.statusCode != 200) {
-      history.add(LogKind.error, id: workId, extra: "[ERROR] Fetch failed ${res.statusCode} - $workId");
+      history.add(LogKind.error,
+          id: workId,
+          extra: "[ERROR] Fetch failed ${res.statusCode} - $workId");
       throw Exception('Failed to fetch: ${res.statusCode}');
     }
 
@@ -99,7 +108,7 @@ class DownloadService with ChangeNotifier {
     htmlText = injected + htmlText;
 
     final fileName = '$workId.html';
-    final path = storage.resolvePath(fileName);
+    final path = storage.resolveFileUri(fileName);
     final file = File(path);
     await file.writeAsString(htmlText);
 
@@ -107,8 +116,10 @@ class DownloadService with ChangeNotifier {
     await library.rescan();
 
     // Track history
-    history.add(LogKind.downloaded, id: workId, title: meta.title,
-      extra: "[DOWNLOADED] ${meta.title} - $workId");
+    history.add(LogKind.downloaded,
+        id: workId,
+        title: meta.title,
+        extra: "[DOWNLOADED] ${meta.title} - $workId");
 
     // Persist "download history" list as simple list of last 50 ids
     _historyIds.insert(0, workId);

@@ -56,7 +56,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final hist = context.read<HistoryService>();
     if (_web == null) return;
     try {
-      // calculate normalized progress
       final res = await _web!.evaluateJavascript(source: """
 (() => {
   const y = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
@@ -80,7 +79,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
       await lib.updateWork(w);
 
-      // emit debug-ish progress logs at 25% and 50% thresholds
       final p25 = (pct >= 0.25 && pct < 0.26);
       final p50 = (pct >= 0.50 && pct < 0.51);
       if (p25 || p50) {
@@ -106,17 +104,34 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  Future<void> _applyReaderFont() async {
-    final scale = context.read<SettingsService>().readerFontScale;
+  /// Combined font size + dark/light theme application
+  Future<void> _applyReaderStyles() async {
+    final settings = context.read<SettingsService>();
+    final scale = settings.readerFontScale;
+    final isDark = settings.darkMode;
+
+    final bg = isDark ? '#121212' : '#FFFFFF';
+    final text = isDark ? '#E0E0E0' : '#000000';
+    final link = isDark ? '#90CAF9' : '#1A73E8';
+
     await _web?.evaluateJavascript(source: """
 (() => {
-  const s = document.getElementById('ficbatch_font') || (function(){
-    const style = document.createElement('style');
-    style.id='ficbatch_font';
+  const id = 'ficbatch_styles';
+  let style = document.getElementById(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = id;
     document.head.appendChild(style);
-    return style;
-  })();
-  s.textContent = `html, body { font-size: ${(scale * 100).toStringAsFixed(0)}% !important; line-height: 1.6; }`;
+  }
+  style.textContent = `
+    html, body {
+      background-color: ${bg} !important;
+      color: ${text} !important;
+      font-size: ${(scale * 100).toStringAsFixed(0)}% !important;
+      line-height: 1.6;
+    }
+    a { color: ${link} !important; }
+  `;
 })();
 """);
   }
@@ -139,10 +154,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
 """);
     if (res is List) {
       setState(() {
-        _chapters = res
-            .map((e) => {'title': e['title'], 'id': e['id']})
-            .cast<Map<String, String>>()
-            .toList();
+        if (res is List) {
+          setState(() {
+            _chapters = res.map((e) {
+              final map = Map<String, dynamic>.from(e);
+              return {
+                'title': map['title']?.toString() ?? '',
+                'id': map['id']?.toString() ?? ''
+              };
+            }).toList();
+          });
+        }
       });
     }
   }
@@ -150,7 +172,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   Widget build(BuildContext context) {
     final work = widget.args.work;
-    final settings = context.watch<SettingsService>();
 
     return NeumorphicBackground(
       child: Scaffold(
@@ -172,7 +193,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   context: context,
                   builder: (_) => _ReaderSettings(),
                 );
-                await _applyReaderFont();
+                await _applyReaderStyles();
               },
             ),
           ],
@@ -180,21 +201,26 @@ class _ReaderScreenState extends State<ReaderScreen> {
         body: Stack(
           children: [
             InAppWebView(
-              initialFile: work.filePath,
+              initialUrlRequest: URLRequest(
+                url: WebUri('file://${p.normalize(p.absolute(work.filePath))}'),
+              ),
               initialSettings: InAppWebViewSettings(
+                allowFileAccess: true,
+                allowContentAccess: true,
                 allowFileAccessFromFileURLs: true,
                 allowUniversalAccessFromFileURLs: true,
                 javaScriptEnabled: true,
                 transparentBackground: true,
-                supportZoom: true,
+                supportZoom: false,
+                mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+                useHybridComposition: true,
               ),
-              onWebViewCreated: (c) => _web = c,
-              onLoadStop: (c, url) async {
-                await _applyReaderFont();
+              onWebViewCreated: (controller) => _web = controller,
+              onLoadStop: (controller, url) async {
+                await _applyReaderStyles();
                 await _restoreScroll(work);
               },
-              onScrollChanged: (c, x, y) {
-                // update in-memory meter quickly; persisted by autosave timer
+              onScrollChanged: (controller, x, y) {
                 _progressUpdateQuick();
               },
             ),
@@ -247,8 +273,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   return y/max;
 })()
 """);
-      if (res is num)
+      if (res is num) {
         setState(() => _progress = res.toDouble().clamp(0.0, 1.0));
+      }
     } catch (_) {}
   }
 }
