@@ -1,5 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_neumorphic_plus/flutter_neumorphic_plus.dart';
+import 'package:flutter_neumorphic_plus/flutter_neumorphic.dart';
 import 'package:provider/provider.dart';
 import '../services/download_service.dart';
 import '../services/history_service.dart';
