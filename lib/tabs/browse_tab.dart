@@ -7,9 +7,11 @@ import 'package:webview_windows/webview_windows.dart' as win;
 
 import '../providers/theme_provider.dart';
 import '../providers/storage_provider.dart';
+import '../providers/browse_provider.dart';
 import '../models/work.dart';
 import '../models/reading_progress.dart';
 import '../services/storage_service.dart';
+import '../widgets/advanced_search.dart';
 
 class BrowseTab extends ConsumerStatefulWidget {
   const BrowseTab({super.key});
@@ -21,10 +23,20 @@ class BrowseTab extends ConsumerStatefulWidget {
 class _BrowseTabState extends ConsumerState<BrowseTab> {
   WebViewController? _controller;
   win.WebviewController? _winController;
-
   final TextEditingController _urlController = TextEditingController();
   bool _isLoading = true;
   bool _isWindows = Platform.isWindows;
+  String _searchType = 'query';
+
+  final Map<String, String> _searchTypeLabels = const {
+    'query': 'All Fields',
+    'title': 'Title',
+    'creators': 'Author',
+    'fandom_names': 'Fandom',
+    'character_names': 'Character',
+    'relationship_names': 'Relationship',
+    'freeform_names': 'Tag',
+  };
 
   @override
   void initState() {
@@ -32,168 +44,317 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     _initWebView();
   }
 
-  String get _readerJs {
-    final theme = ref.watch(themeProvider);
-    if (theme == ThemeMode.dark) {
-      return _darkModeJs;
-    } else {
-      return _lightModeJs;
+  Future<void> _injectReaderMode() async {
+    final readerJs = ref.read(readerJsProvider);
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(readerJs);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(readerJs);
+      }
+      debugPrint('✅ Reader mode injected.');
+    } catch (e) {
+      debugPrint('⚠️ Reader mode failed: $e');
     }
   }
 
-  String get _lightModeJs => '''
-    (function() {
-      if (window.__fb_reader_applied) { try { window.__fb_apply && window.__fb_apply(); } catch(e){} return; }
-      window.__fb_reader_applied = true;
-
-      var STYLE_ID = '__fb_reader_style';
-      var HIDE_ID = '__fb_reader_hide';
-
-      function ensureHideHeaderCSS() {
-        if (document.getElementById(HIDE_ID)) return;
-        var s = document.createElement('style');
-        s.id = HIDE_ID;
-        s.textContent = [
-          '#login, ul.primary.navigation.actions {',
-          '  display: none !important;',
-          '  visibility: hidden !important;',
-          '  height: 0 !important;',
-          '  overflow: hidden !important;',
-          '}',
-          '.actions { display: none !important; }',
-          '.footer { display: none !important; }'
-        ].join('\\n');
-        document.documentElement.appendChild(s);
-      }
-
-      function nukeHeader() {
-        var sels = ['#login','ul.primary.navigation.actions'];
-        for (var i = 0; i < sels.length; i++) {
-          var nodes = document.querySelectorAll ? document.querySelectorAll(sels[i]) : [];
-          for (var j = 0; j < nodes.length; j++) {
-            try { nodes[j].parentNode && nodes[j].parentNode.removeChild(nodes[j]); } catch(e) {}
-          }
-        }
-      }
-
-      function ensureReaderStyles() {
-        if (document.getElementById(STYLE_ID)) return;
-        var s = document.createElement('style');
-        s.id = STYLE_ID;
-        s.textContent = [
-          'html, body { background: #fff !important; color: #000 !important; }',
-          'a, a:visited { color: #0066cc !important; text-decoration: none !important; }',
-          'h1, h2, h3, h4, h5, h6 { color: #000 !important; }',
-          '* { background-color: transparent !important; }',
-          '* { background: rgba(255, 255, 255, 0.8) !important; }',
-          '* { color: #000 !important; }'
-        ].join('\\n');
-        document.documentElement.appendChild(s);
-      }
-
-      function apply() {
-        ensureHideHeaderCSS();
-        nukeHeader();
-        ensureReaderStyles();
-      }
-
-      window.__fb_apply = apply;
-
-      if (document.readyState === 'loading') {
-        try { document.addEventListener('DOMContentLoaded', apply); } catch(e){ setTimeout(apply, 0); }
-      } else {
-        apply();
-      }
-
-      try {
-        var mo = new MutationObserver(function() { apply(); });
-        mo.observe(document.documentElement, { childList: true, subtree: true });
-      } catch(e) {}
-    })();
-  ''';
-
-  String get _darkModeJs => '''
-    (function() {
-      if (window.__fb_reader_applied) { try { window.__fb_apply && window.__fb_apply(); } catch(e){} return; }
-      window.__fb_reader_applied = true;
-
-      var STYLE_ID = '__fb_reader_style';
-      var HIDE_ID = '__fb_reader_hide';
-
-      function ensureHideHeaderCSS() {
-        if (document.getElementById(HIDE_ID)) return;
-        var s = document.createElement('style');
-        s.id = HIDE_ID;
-        s.textContent = [
-          '#login, ul.primary.navigation.actions {',
-          '  display: none !important;',
-          '  visibility: hidden !important;',
-          '  height: 0 !important;',
-          '  overflow: hidden !important;',
-          '}',
-          '.actions { display: none !important; }',
-          '.footer { display: none !important; }'
-        ].join('\\n');
-        document.documentElement.appendChild(s);
-      }
-
-      function nukeHeader() {
-        var sels = ['#login','ul.primary.navigation.actions'];
-        for (var i = 0; i < sels.length; i++) {
-          var nodes = document.querySelectorAll ? document.querySelectorAll(sels[i]) : [];
-          for (var j = 0; j < nodes.length; j++) {
-            try { nodes[j].parentNode && nodes[j].parentNode.removeChild(nodes[j]); } catch(e) {}
-          }
-        }
-      }
-
-      function ensureReaderStyles() {
-        if (document.getElementById(STYLE_ID)) return;
-        var s = document.createElement('style');
-        s.id = STYLE_ID;
-        s.textContent = [
-          'html, body { background: #111 !important; color: #eee !important; }',
-          'a, a:visited { color: #66d9ef !important; text-decoration: none !important; }',
-          'h1, h2, h3, h4, h5, h6 { color: #eee !important; }',
-          '* { background-color: transparent !important; }',
-          '* { background: rgba(0, 0, 0, 0.5) !important; }',
-          '* { color: #eee !important; }'
-        ].join('\\n');
-        document.documentElement.appendChild(s);
-      }
-
-      function apply() {
-        ensureHideHeaderCSS();
-        nukeHeader();
-        ensureReaderStyles();
-      }
-
-      window.__fb_apply = apply;
-
-      if (document.readyState === 'loading') {
-        try { document.addEventListener('DOMContentLoaded', apply); } catch(e){ setTimeout(apply, 0); }
-      } else {
-        apply();
-      }
-
-      try {
-        var mo = new MutationObserver(function() { apply(); });
-        mo.observe(document.documentElement, { childList: true, subtree: true });
-      } catch(e) {}
-    })();
-  ''';
-
-  Future<void> _injectReaderMode() async {
+  Future<void> _initWebView() async {
+    setState(() => _isLoading = true);
     try {
-      if (_isWindows && _winController != null) {
-        await _winController!.executeScript(_readerJs);
-      } else if (_controller != null) {
-        await _controller!.runJavaScript(_readerJs);
+      if (_isWindows) {
+        _winController = win.WebviewController();
+        await _winController!.initialize();
+        await _winController!.setBackgroundColor(Colors.transparent);
+        await _winController!.setPopupWindowPolicy(
+          win.WebviewPopupWindowPolicy.deny,
+        );
+
+        _winController!.loadingState.listen((state) {
+          final loading = state == win.LoadingState.loading;
+          if (mounted) setState(() => _isLoading = loading);
+          if (!loading) _injectReaderMode();
+        });
+
+        await _winController!.loadUrl('https://archiveofourown.org/');
+      } else {
+        final c = WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onPageStarted: (_) => setState(() => _isLoading = true),
+              onPageFinished: (_) {
+                setState(() => _isLoading = false);
+                _injectReaderMode();
+              },
+            ),
+          )
+          ..loadRequest(Uri.parse('https://archiveofourown.org/'));
+        setState(() => _controller = c);
       }
-      debugPrint('✅ Reader mode script injected.');
     } catch (e) {
-      debugPrint('⚠️ Reader mode injection failed: $e');
+      debugPrint('❌ WebView init failed: $e');
+      setState(() => _isLoading = false);
     }
+  }
+
+  void _performSearch() {
+    final query = _urlController.text.trim();
+    if (query.isEmpty) return;
+
+    final params = {'work_search[$_searchType]': query, 'commit': 'Search'};
+
+    final uri = Uri.https('archiveofourown.org', '/works/search', params);
+
+    if (_isWindows) {
+      _winController?.loadUrl(uri.toString());
+    } else {
+      _controller?.loadRequest(uri);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = ref.read(storageProvider);
+
+    return SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _urlController,
+                    decoration: InputDecoration(
+                      hintText: 'Search AO3 works...',
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: _searchType,
+                              icon: const Icon(Icons.arrow_drop_down),
+                              items: _searchTypeLabels.entries
+                                  .map(
+                                    (e) => DropdownMenuItem(
+                                      value: e.key,
+                                      child: Text(e.value),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setState(() => _searchType = val);
+                                }
+                              },
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.search),
+                            tooltip: 'Quick Search',
+                            onPressed: _performSearch,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.tune),
+                            tooltip: 'Advanced Search',
+                            onPressed: () async {
+                              final lastFilters = await storage
+                                  .getAdvancedFilters();
+
+                              final result =
+                                  await Navigator.push<Map<String, dynamic>>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => AdvancedSearchScreen(
+                                        initialFilters: lastFilters,
+                                      ),
+                                    ),
+                                  );
+
+                              if (result == null) return;
+
+                              final url = result['url'] as String?;
+                              final filters =
+                                  result['filters'] as Map<String, dynamic>?;
+
+                              if (filters != null) {
+                                await storage.saveAdvancedFilters(filters);
+                              }
+
+                              if (url != null && url.isNotEmpty) {
+                                if (_isWindows) {
+                                  await _winController?.loadUrl(url);
+                                } else {
+                                  await _controller?.loadRequest(
+                                    Uri.parse(url),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.bookmarks),
+                            tooltip: 'Saved Searches',
+                            onPressed: () async {
+                              final saved = await storage.getSavedSearches();
+                              if (!context.mounted) return;
+                              await _showSavedSearchDialog(context, saved);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.bookmark_add),
+                            tooltip: 'Save Current Search',
+                            onPressed: () async {
+                              final query = _urlController.text.trim();
+                              if (query.isEmpty) return;
+
+                              final nameController = TextEditingController();
+                              final result = await showDialog<String>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Save Current Search'),
+                                  content: TextField(
+                                    controller: nameController,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Enter a name for this search',
+                                    ),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(
+                                        ctx,
+                                        nameController.text.trim(),
+                                      ),
+                                      child: const Text('Save'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (result == null || result.isEmpty) return;
+
+                              final filters = await storage
+                                  .getAdvancedFilters();
+                              final params = {
+                                'work_search[$_searchType]': query,
+                                'commit': 'Search',
+                              };
+                              final uri = Uri.https(
+                                'archiveofourown.org',
+                                '/works/search',
+                                params,
+                              );
+
+                              await storage.saveSearch(
+                                result,
+                                uri.toString(),
+                                filters,
+                              );
+
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Saved search "$result"!'),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    onSubmitted: (_) => _performSearch(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.chrome_reader_mode),
+                  tooltip: 'Apply Reader Mode',
+                  onPressed: _injectReaderMode,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.save_alt),
+                  tooltip: 'Save to Library',
+                  onPressed: _saveToLibrary,
+                ),
+              ],
+            ),
+          ),
+          if (_isLoading) const LinearProgressIndicator(minHeight: 2),
+          Expanded(
+            child: _isWindows
+                ? (_winController == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : win.Webview(_winController!))
+                : (_controller == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : WebViewWidget(controller: _controller!)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showSavedSearchDialog(
+    BuildContext context,
+    List<Map<String, dynamic>> saved,
+  ) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Saved Searches'),
+        content: saved.isEmpty
+            ? const Text('No saved searches yet.')
+            : SizedBox(
+                width: double.maxFinite,
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: saved.length,
+                  itemBuilder: (_, i) {
+                    final item = saved[i];
+                    return ListTile(
+                      title: Text(item['name'] ?? 'Unnamed'),
+                      subtitle: Text(item['url'] ?? ''),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete),
+                        onPressed: () async {
+                          final storage = ref.read(storageProvider);
+                          await storage.deleteSavedSearch(item['name']);
+                          Navigator.pop(ctx);
+                          _showSavedSearchDialog(
+                            context,
+                            await storage.getSavedSearches(),
+                          );
+                        },
+                      ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        final url = item['url'] ?? '';
+                        if (_isWindows) {
+                          _winController?.loadUrl(url);
+                        } else {
+                          _controller?.loadRequest(Uri.parse(url));
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveToLibrary() async {
@@ -246,50 +407,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to extract AO3 metadata.')),
       );
-    }
-  }
-
-  Future<void> _initWebView() async {
-    setState(() => _isLoading = true);
-    try {
-      if (_isWindows) {
-        _winController = win.WebviewController();
-        await _winController!.initialize();
-        await _winController!.setBackgroundColor(Colors.transparent);
-        await _winController!.setPopupWindowPolicy(
-          win.WebviewPopupWindowPolicy.deny,
-        );
-
-        _winController!.loadingState.listen((state) {
-          final loading = state == win.LoadingState.loading;
-          if (mounted) setState(() => _isLoading = loading);
-          if (!loading) {
-            _injectReaderMode();
-          }
-        });
-
-        await _winController!.loadUrl('https://archiveofourown.org/');
-      } else {
-        final c = WebViewController()
-          ..setJavaScriptMode(JavaScriptMode.unrestricted)
-          ..setNavigationDelegate(
-            NavigationDelegate(
-              onPageStarted: (url) {
-                if (mounted) setState(() => _isLoading = true);
-              },
-              onPageFinished: (url) {
-                if (mounted) setState(() => _isLoading = false);
-                _injectReaderMode();
-              },
-              onNavigationRequest: (request) => NavigationDecision.navigate,
-            ),
-          )
-          ..loadRequest(Uri.parse('https://archiveofourown.org/'));
-        setState(() => _controller = c);
-      }
-    } catch (e) {
-      debugPrint('❌ WebView init failed: $e');
-      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -429,96 +546,5 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           'hits': 0,
           'comments': 0,
         };
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _urlController,
-                    decoration: InputDecoration(
-                      hintText: 'Search AO3 works...',
-                      border: const OutlineInputBorder(),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 0,
-                      ),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.search),
-                        onPressed: () {
-                          final query = _urlController.text.trim();
-                          if (query.isEmpty) return;
-                          final uri = Uri.https(
-                            'archiveofourown.org',
-                            '/works/search',
-                            {'work_search[query]': query},
-                          );
-                          if (_isWindows) {
-                            _winController!.loadUrl(uri.toString());
-                          } else {
-                            _controller!.loadRequest(uri);
-                          }
-                        },
-                      ),
-                    ),
-                    onSubmitted: (value) {
-                      final query = value.trim();
-                      if (query.isEmpty) return;
-                      final uri = Uri.https(
-                        'archiveofourown.org',
-                        '/works/search',
-                        {'work_search[query]': query},
-                      );
-                      if (_isWindows) {
-                        _winController!.loadUrl(uri.toString());
-                      } else {
-                        _controller!.loadRequest(uri);
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chrome_reader_mode),
-                  tooltip: 'Apply Reader Mode',
-                  onPressed: _injectReaderMode,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.save_alt),
-                  tooltip: 'Save to Library',
-                  onPressed: _saveToLibrary,
-                ),
-              ],
-            ),
-          ),
-          if (_isLoading) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: _isWindows
-                ? _winController == null
-                      ? const Center(child: CircularProgressIndicator())
-                      : win.Webview(_winController!)
-                : _controller == null
-                ? const Center(child: CircularProgressIndicator())
-                : WebViewWidget(controller: _controller!),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    if (_isWindows) {
-      _winController?.dispose();
-    }
-    super.dispose();
   }
 }
