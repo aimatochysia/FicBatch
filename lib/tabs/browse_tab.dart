@@ -73,7 +73,10 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setNavigationDelegate(
             NavigationDelegate(
-              onPageStarted: (_) => setState(() => _isLoading = true),
+              onPageStarted: (_) async {
+                await _injectEarlyStyle();
+                setState(() => _isLoading = true);
+              },
               onPageFinished: (_) {
                 setState(() => _isLoading = false);
                 _injectReaderMode();
@@ -90,14 +93,151 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     }
   }
 
-  Future<void> _injectHideFilterButton() async {
-    const js = """
-    (function(){
-      const el = document.querySelector('li.narrow-shown.hidden a#go_to_filters');
-      if (el && el.parentElement) {
-        el.parentElement.style.display = 'none';
-      }
+  Future<void> _injectEarlyStyle() async {
+    const css = '''
+    (function() {
+      const s = document.createElement('style');
+      s.id = 'early-dark-style';
+      s.textContent = `
+        html, body {
+          background-color: #121212 !important;
+          color: #e0e0e0 !important;
+        }
+        * {
+          background-color: transparent !important;
+          color: inherit !important;
+        }
+      `;
+      document.documentElement.prepend(s);
     })();
+  ''';
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(css);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(css);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Early style injection failed: $e');
+    }
+  }
+
+  Future<void> _injectHideFilterButton() async {
+    const js = r"""
+  (function() {
+    function injectAO3FilterMod() {
+      try {
+        const origButton = document.querySelector('a#go_to_filters');
+        const origForm = document.querySelector('form#work-filters.filters');
+        if (!origButton || !origForm) {
+          console.warn('AO3 filter mod: original elements not found yet.');
+          return false;
+        }
+
+        document.querySelector('#work-filters-mod')?.remove();
+        document.querySelector('#go_to_filters-mod')?.remove();
+        document.querySelector('#ao3-filter-backdrop-mod')?.remove();
+
+        const btn = origButton.cloneNode(true);
+        const form = origForm.cloneNode(true);
+
+        function modIds(el) {
+          if (!el || el.nodeType !== 1) return;
+          if (el.id) el.id += '-mod';
+          if (el.classList && el.classList.length)
+            el.className = Array.from(el.classList).map(c => c + '-mod').join(' ');
+          for (const child of el.querySelectorAll('*[id], *[class]')) {
+            if (child.id) child.id += '-mod';
+            if (child.classList && child.classList.length)
+              child.className = Array.from(child.classList).map(c => c + '-mod').join(' ');
+          }
+        }
+        modIds(btn);
+        modIds(form);
+
+        let stash = document.getElementById('ao3-filters-stash');
+        if (!stash) {
+          stash = document.createElement('div');
+          stash.id = 'ao3-filters-stash';
+          stash.style.display = 'none';
+          document.body.appendChild(stash);
+        }
+        stash.appendChild(origButton);
+        stash.appendChild(origForm);
+
+        const parent = stash.parentElement || document.querySelector('ul.navigation, header, body');
+        (parent || document.body).insertBefore(btn, parent?.firstChild || null);
+
+        Object.assign(form.style, {
+          position: 'fixed',
+          top: '15%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#fff',
+          border: '1px solid rgba(0,0,0,0.15)',
+          borderRadius: '8px',
+          boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+          padding: '20px',
+          width: 'min(95%, 800px)',
+          maxHeight: '75vh',
+          overflowY: 'auto',
+          zIndex: '100000',
+          display: 'none',
+          opacity: '0',
+          transition: 'opacity 0.25s ease'
+        });
+
+        const backdrop = document.createElement('div');
+        backdrop.id = 'ao3-filter-backdrop-mod';
+        Object.assign(backdrop.style, {
+          position: 'fixed',
+          inset: '0',
+          background: 'rgba(0,0,0,0.35)',
+          zIndex: '99999',
+          display: 'none'
+        });
+        document.body.appendChild(backdrop);
+        document.body.appendChild(form);
+
+        const open = () => {
+          form.style.display = 'block';
+          backdrop.style.display = 'block';
+          requestAnimationFrame(() => form.style.opacity = '1');
+          document.body.style.overflow = 'hidden';
+          document.body.className = document.body.className.replace(/\bfilters-\w+\b/g, '');
+        };
+        const close = () => {
+          form.style.opacity = '0';
+          backdrop.style.display = 'none';
+          document.body.style.overflow = '';
+          setTimeout(() => (form.style.display = 'none'), 250);
+        };
+
+        btn.addEventListener('click', e => {
+          e.preventDefault();
+          form.style.display === 'block' ? close() : open();
+        });
+        backdrop.addEventListener('click', close);
+        document.addEventListener('keydown', e => {
+          if (e.key === 'Escape' && form.style.display === 'block') close();
+        });
+
+        console.info('✅ AO3 filter mod: popup ready.');
+        return true;
+      } catch (err) {
+        console.error('⚠️ AO3 filter mod error', err);
+        return false;
+      }
+    }
+
+    const tryInject = () => {
+      if (!injectAO3FilterMod()) setTimeout(tryInject, 1000);
+    };
+    if (document.readyState === 'complete' || document.readyState === 'interactive')
+      setTimeout(tryInject, 1200);
+    else
+      document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 1200));
+  })();
   """;
 
     try {
@@ -107,7 +247,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         await _controller!.runJavaScript(js);
       }
     } catch (e) {
-      debugPrint('⚠️ Hide filter button failed: $e');
+      debugPrint('⚠️ Filter form injection failed: $e');
     }
   }
 
