@@ -28,16 +28,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool _isWindows = Platform.isWindows;
   String _searchType = 'query';
 
-  final Map<String, String> _searchTypeLabels = const {
-    'query': 'All Fields',
-    'title': 'Title',
-    'creators': 'Author',
-    'fandom_names': 'Fandom',
-    'character_names': 'Character',
-    'relationship_names': 'Relationship',
-    'freeform_names': 'Tag',
-  };
-
   @override
   void initState() {
     super.initState();
@@ -52,7 +42,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
       } else if (_controller != null) {
         await _controller!.runJavaScript(readerJs);
       }
-      debugPrint('✅ Reader mode injected.');
     } catch (e) {
       debugPrint('⚠️ Reader mode failed: $e');
     }
@@ -72,7 +61,10 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         _winController!.loadingState.listen((state) {
           final loading = state == win.LoadingState.loading;
           if (mounted) setState(() => _isLoading = loading);
-          if (!loading) _injectReaderMode();
+          if (!loading) {
+            _injectReaderMode();
+            _injectHideFilterButton();
+          }
         });
 
         await _winController!.loadUrl('https://archiveofourown.org/');
@@ -85,6 +77,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
               onPageFinished: (_) {
                 setState(() => _isLoading = false);
                 _injectReaderMode();
+                _injectHideFilterButton();
               },
             ),
           )
@@ -94,6 +87,27 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     } catch (e) {
       debugPrint('❌ WebView init failed: $e');
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _injectHideFilterButton() async {
+    const js = """
+    (function(){
+      const el = document.querySelector('li.narrow-shown.hidden a#go_to_filters');
+      if (el && el.parentElement) {
+        el.parentElement.style.display = 'none';
+      }
+    })();
+  """;
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Hide filter button failed: $e');
     }
   }
 
@@ -133,25 +147,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _searchType,
-                              icon: const Icon(Icons.arrow_drop_down),
-                              items: _searchTypeLabels.entries
-                                  .map(
-                                    (e) => DropdownMenuItem(
-                                      value: e.key,
-                                      child: Text(e.value),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (val) {
-                                if (val != null) {
-                                  setState(() => _searchType = val);
-                                }
-                              },
-                            ),
-                          ),
                           IconButton(
                             icon: const Icon(Icons.search),
                             tooltip: 'Quick Search',
@@ -320,8 +315,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   itemBuilder: (_, i) {
                     final item = saved[i];
                     return ListTile(
-                      title: Text(item['name'] ?? 'Unnamed'),
-                      subtitle: Text(item['url'] ?? ''),
+                      title: Text(item['name'] ?? 'default'),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete),
                         onPressed: () async {

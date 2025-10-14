@@ -142,9 +142,7 @@ class _AdvancedSearchScreenState extends ConsumerState<AdvancedSearchScreen> {
           title: const Text('Name this search'),
           content: TextField(
             controller: nameController,
-            decoration: const InputDecoration(
-              hintText: 'e.g. Long Fics >50k words',
-            ),
+            decoration: const InputDecoration(hintText: 'e.g. "catradora"'),
           ),
           actions: [
             TextButton(
