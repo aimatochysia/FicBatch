@@ -110,7 +110,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         setState(() => _controller = c);
       }
     } catch (e) {
-      debugPrint('❌ WebView init failed: $e');
+      debugPrint('WebView init failed: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -146,121 +146,125 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
 
   Future<void> _injectHideFilterButton() async {
     const js = r"""
-  (function() {
-    function injectAO3FilterMod() {
-      try {
-        const origButton = document.querySelector('a#go_to_filters');
-        const origForm = document.querySelector('form#work-filters.filters');
-        if (!origButton || !origForm) {
-          console.warn('AO3 filter mod: original elements not found yet.');
-          return false;
-        }
-
-        document.querySelector('#work-filters-mod')?.remove();
-        document.querySelector('#go_to_filters-mod')?.remove();
-        document.querySelector('#ao3-filter-backdrop-mod')?.remove();
-
-        const btn = origButton.cloneNode(true);
-        const form = origForm.cloneNode(true);
-
-        function modIds(el) {
-          if (!el || el.nodeType !== 1) return;
-          if (el.id) el.id += '-mod';
-          if (el.classList && el.classList.length)
-            el.className = Array.from(el.classList).map(c => c + '-mod').join(' ');
-          for (const child of el.querySelectorAll('*[id], *[class]')) {
-            if (child.id) child.id += '-mod';
-            if (child.classList && child.classList.length)
-              child.className = Array.from(child.classList).map(c => c + '-mod').join(' ');
-          }
-        }
-        modIds(btn);
-        modIds(form);
-
-        let stash = document.getElementById('ao3-filters-stash');
-        if (!stash) {
-          stash = document.createElement('div');
-          stash.id = 'ao3-filters-stash';
-          stash.style.display = 'none';
-          document.body.appendChild(stash);
-        }
-        stash.appendChild(origButton);
-        stash.appendChild(origForm);
-
-        const parent = stash.parentElement || document.querySelector('ul.navigation, header, body');
-        (parent || document.body).insertBefore(btn, parent?.firstChild || null);
-
-        Object.assign(form.style, {
-          position: 'fixed',
-          top: '15%',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: '#fff',
-          border: '1px solid rgba(0,0,0,0.15)',
-          borderRadius: '8px',
-          boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-          padding: '20px',
-          width: 'min(95%, 800px)',
-          maxHeight: '75vh',
-          overflowY: 'auto',
-          zIndex: '100000',
-          display: 'none',
-          opacity: '0',
-          transition: 'opacity 0.25s ease'
-        });
-
-        const backdrop = document.createElement('div');
-        backdrop.id = 'ao3-filter-backdrop-mod';
-        Object.assign(backdrop.style, {
-          position: 'fixed',
-          inset: '0',
-          background: 'rgba(0,0,0,0.35)',
-          zIndex: '99999',
-          display: 'none'
-        });
-        document.body.appendChild(backdrop);
-        document.body.appendChild(form);
-
-        const open = () => {
-          form.style.display = 'block';
-          backdrop.style.display = 'block';
-          requestAnimationFrame(() => form.style.opacity = '1');
-          document.body.style.overflow = 'hidden';
-          document.body.className = document.body.className.replace(/\bfilters-\w+\b/g, '');
-        };
-        const close = () => {
-          form.style.opacity = '0';
-          backdrop.style.display = 'none';
-          document.body.style.overflow = '';
-          setTimeout(() => (form.style.display = 'none'), 250);
-        };
-
-        btn.addEventListener('click', e => {
-          e.preventDefault();
-          form.style.display === 'block' ? close() : open();
-        });
-        backdrop.addEventListener('click', close);
-        document.addEventListener('keydown', e => {
-          if (e.key === 'Escape' && form.style.display === 'block') close();
-        });
-
-        console.info('✅ AO3 filter mod: popup ready.');
-        return true;
-      } catch (err) {
-        console.error('⚠️ AO3 filter mod error', err);
+(function() {
+  function injectAO3FilterMod() {
+    try {
+      const origButton = document.querySelector('a#go_to_filters');
+      const origForm = document.querySelector('form#work-filters.filters');
+      if (!origButton || !origForm) {
         return false;
       }
-    }
 
-    const tryInject = () => {
-      if (!injectAO3FilterMod()) setTimeout(tryInject, 1000);
-    };
-    if (document.readyState === 'complete' || document.readyState === 'interactive')
-      setTimeout(tryInject, 1200);
-    else
-      document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 1200));
-  })();
-  """;
+      const origParent = origButton.parentElement;
+      const nextSibling = origButton.nextSibling;
+
+      document.querySelector('#work-filters-mod')?.remove();
+      document.querySelector('#go_to_filters-mod')?.remove();
+      document.querySelector('#ao3-filter-backdrop-mod')?.remove();
+
+      const btn = origButton.cloneNode(true);
+      const form = origForm.cloneNode(true);
+
+      function modIds(el) {
+        if (!el || el.nodeType !== 1) return;
+        if (el.id) el.id += '-mod';
+        if (el.classList && el.classList.length)
+          el.className = Array.from(el.classList).map(c => c + '-mod').join(' ');
+        for (const child of el.querySelectorAll('*[id], *[class]')) {
+          if (child.id) child.id += '-mod';
+          if (child.classList && child.classList.length)
+            child.className = Array.from(child.classList).map(c => c + '-mod').join(' ');
+        }
+      }
+      modIds(btn);
+      modIds(form);
+
+      let stash = document.getElementById('ao3-filters-stash');
+      if (!stash) {
+        stash = document.createElement('div');
+        stash.id = 'ao3-filters-stash';
+        stash.style.display = 'none';
+        document.body.appendChild(stash);
+      }
+      stash.appendChild(origButton);
+      stash.appendChild(origForm);
+
+      if (origParent) {
+        if (nextSibling) origParent.insertBefore(btn, nextSibling);
+        else origParent.appendChild(btn);
+      } else {
+        document.body.appendChild(btn);
+      }
+
+      Object.assign(form.style, {
+        position: 'fixed',
+        top: '15%',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: '#fff',
+        border: '1px solid rgba(0,0,0,0.15)',
+        borderRadius: '8px',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+        padding: '20px',
+        width: 'min(95%, 800px)',
+        maxHeight: '75vh',
+        overflowY: 'auto',
+        zIndex: '100000',
+        display: 'none',
+        opacity: '0',
+        transition: 'opacity 0.25s ease'
+      });
+
+      const backdrop = document.createElement('div');
+      backdrop.id = 'ao3-filter-backdrop-mod';
+      Object.assign(backdrop.style, {
+        position: 'fixed',
+        inset: '0',
+        background: 'rgba(0,0,0,0.35)',
+        zIndex: '99999',
+        display: 'none'
+      });
+      document.body.appendChild(backdrop);
+      document.body.appendChild(form);
+
+      const open = () => {
+        form.style.display = 'block';
+        backdrop.style.display = 'block';
+        requestAnimationFrame(() => form.style.opacity = '1');
+        document.body.style.overflow = 'hidden';
+        document.body.className = document.body.className.replace(/\bfilters-\w+\b/g, '');
+      };
+      const close = () => {
+        form.style.opacity = '0';
+        backdrop.style.display = 'none';
+        document.body.style.overflow = '';
+        setTimeout(() => (form.style.display = 'none'), 250);
+      };
+
+      btn.addEventListener('click', e => {
+        e.preventDefault();
+        form.style.display === 'block' ? close() : open();
+      });
+      backdrop.addEventListener('click', close);
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && form.style.display === 'block') close();
+      });
+
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  const tryInject = () => {
+    if (!injectAO3FilterMod()) setTimeout(tryInject, 50);
+  };
+  if (document.readyState === 'complete' || document.readyState === 'interactive')
+    setTimeout(tryInject, 60);
+  else
+    document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 60));
+})();
+""";
 
     try {
       if (_isWindows && _winController != null) {
@@ -530,20 +534,54 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           ? await _getWindowsCurrentUrl()
           : await _controller!.currentUrl();
 
-      if (url == null || !url.contains('/works/')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not a valid AO3 work page.')),
-        );
+      if (url == null) {
+        _showSnackBar('Unable to get current page.');
         return;
       }
 
-      final workId = RegExp(r'/works/(\d+)').firstMatch(url)?.group(1);
-      if (workId == null) return;
+      final workId = _extractWorkId(url);
+      if (workId == null) {
+        _showSnackBar('Not a valid AO3 work page.');
+        return;
+      }
 
-      final title = await _getInnerText('.title.heading');
-      final author = await _getInnerText('.byline a');
-      final tags = await _getTags();
-      final statsJson = await _getStats();
+      final title = await _getInnerText('h2.title.heading');
+      final author = await _getInnerText('h3.byline.heading a[rel="author"]');
+      final tagsMap = await _getTags();
+      final tags = tagsMap.values.expand((list) => list).toList();
+      final stats = await _getStats();
+
+      DateTime? parseDate(dynamic v) {
+        if (v == null) return null;
+        try {
+          return DateTime.parse(v.toString());
+        } catch (_) {
+          return null;
+        }
+      }
+
+      int? parseInt(dynamic v) {
+        if (v == null) return null;
+        if (v is int) return v;
+        return int.tryParse(
+          v.toString().replaceAll(',', '').replaceAll('.', '').trim(),
+        );
+      }
+
+      int? parseChapters(dynamic v) {
+        if (v == null) return null;
+        final text = v.toString();
+        final match = RegExp(r'(\d+)').firstMatch(text);
+        return match != null ? int.tryParse(match.group(1)!) : null;
+      }
+
+      final publishedAt = parseDate(stats['published']);
+      final updatedAt = parseDate(stats['status'] ?? stats['updated']);
+      final wordsCount = parseInt(stats['words']);
+      final kudosCount = parseInt(stats['kudos']);
+      final hitsCount = parseInt(stats['hits']);
+      final commentsCount = parseInt(stats['comments']);
+      final chaptersCount = parseChapters(stats['chapters']);
 
       final newWork = Work(
         id: workId,
@@ -551,13 +589,13 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         author: author.isNotEmpty ? author : 'Unknown Author',
         tags: tags,
         userAddedDate: DateTime.now(),
-        publishedAt: statsJson['published'],
-        updatedAt: statsJson['updated'],
-        wordsCount: statsJson['words'],
-        chaptersCount: statsJson['chapters'],
-        kudosCount: statsJson['kudos'],
-        hitsCount: statsJson['hits'],
-        commentsCount: statsJson['comments'],
+        publishedAt: publishedAt,
+        updatedAt: updatedAt,
+        wordsCount: wordsCount,
+        chaptersCount: chaptersCount,
+        kudosCount: kudosCount,
+        hitsCount: hitsCount,
+        commentsCount: commentsCount,
         readingProgress: ReadingProgress.empty(),
       );
 
@@ -565,16 +603,23 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
       await storage.saveWork(newWork);
 
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved “${newWork.title}” to library!')),
-        );
+        _showSnackBar('Saved “${newWork.title}” to library!');
       }
-    } catch (e) {
-      debugPrint('❌ Save to Library failed: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to extract AO3 metadata.')),
-      );
+    } catch (e, st) {
+      debugPrint('Save to Library failed: $e\n$st');
+      _showSnackBar('Failed to extract AO3 metadata.');
     }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String? _extractWorkId(String url) {
+    final match = RegExp(r'/works/(\d+)').firstMatch(url);
+    return match?.group(1);
   }
 
   Future<String?> _getWindowsCurrentUrl() async {
@@ -647,23 +692,31 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     return value ?? '';
   }
 
-  Future<List<String>> _getTags() async {
-    final js = '''
-      (function(){
-        var nodes = Array.from(document.querySelectorAll('.tags a.tag, li.tag a, .tags li a'));
-        var texts = nodes.map(function(n){ return (n.textContent || "").trim(); })
-                         .filter(function(x){ return x.length > 0; });
-        var seen = {};
-        var out = [];
-        for (var i=0;i<texts.length;i++){
-          var t = texts[i];
-          if (!seen[t]) { seen[t] = true; out.push(t); }
-        }
-        return out;
-      })()
-    ''';
-    final list = await _getJson<List<dynamic>>(js);
-    return (list ?? []).map((e) => e.toString()).toList();
+  Future<Map<String, List<String>>> _getTags() async {
+    const js = r'''
+    (function() {
+      const result = {};
+      const groups = document.querySelectorAll("dl.work.meta.group dt");
+      groups.forEach(dt => {
+        const key = dt.classList[0];
+        const next = dt.nextElementSibling;
+        if (!key || !next) return;
+        const tags = Array.from(next.querySelectorAll("a.tag")).map(a => a.textContent.trim());
+        if (tags.length > 0) result[key] = tags;
+      });
+      return JSON.stringify(result);
+    })();
+  ''';
+
+    final jsonStr = _isWindows
+        ? await _winController!.executeScript(js)
+        : await _controller!.runJavaScriptReturningResult(js);
+
+    return Map<String, List<String>>.from(
+      (jsonDecode(jsonStr) as Map).map(
+        (k, v) => MapEntry(k, List<String>.from(v)),
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> _getStats() async {
