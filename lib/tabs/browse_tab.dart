@@ -238,7 +238,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         form.style.opacity = '0';
         backdrop.style.display = 'none';
         document.body.style.overflow = '';
-        setTimeout(() => (form.style.display = 'none'), 250);
+        setTimeout(() => (form.style.display = 'none'), 10);
       };
 
       btn.addEventListener('click', e => {
@@ -257,12 +257,12 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   }
 
   const tryInject = () => {
-    if (!injectAO3FilterMod()) setTimeout(tryInject, 50);
+    if (!injectAO3FilterMod()) setTimeout(tryInject, 10);
   };
   if (document.readyState === 'complete' || document.readyState === 'interactive')
-    setTimeout(tryInject, 60);
+    setTimeout(tryInject, 20);
   else
-    document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 60));
+    document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 20));
 })();
 """;
 
