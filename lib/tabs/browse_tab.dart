@@ -26,6 +26,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   final TextEditingController _urlController = TextEditingController();
   bool _isLoading = true;
   bool _isWindows = Platform.isWindows;
+  bool _readyToShow = false;
   String _searchType = 'query';
 
   @override
@@ -58,12 +59,25 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           win.WebviewPopupWindowPolicy.deny,
         );
 
-        _winController!.loadingState.listen((state) {
+        _winController!.loadingState.listen((state) async {
           final loading = state == win.LoadingState.loading;
-          if (mounted) setState(() => _isLoading = loading);
+          if (mounted) {
+            setState(() {
+              _isLoading = loading;
+              if (loading) _readyToShow = false;
+            });
+          }
+
           if (!loading) {
-            _injectReaderMode();
-            _injectHideFilterButton();
+            await _injectEarlyStyle();
+            await _injectReaderMode();
+            await _injectHideFilterButton();
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+                _readyToShow = true;
+              });
+            }
           }
         });
 
@@ -74,13 +88,21 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           ..setNavigationDelegate(
             NavigationDelegate(
               onPageStarted: (_) async {
+                setState(() {
+                  _isLoading = true;
+                  _readyToShow = false;
+                });
                 await _injectEarlyStyle();
-                setState(() => _isLoading = true);
               },
-              onPageFinished: (_) {
-                setState(() => _isLoading = false);
-                _injectReaderMode();
-                _injectHideFilterButton();
+              onPageFinished: (_) async {
+                await _injectReaderMode();
+                await _injectHideFilterButton();
+                if (mounted) {
+                  setState(() {
+                    _isLoading = false;
+                    _readyToShow = true;
+                  });
+                }
               },
             ),
           )
@@ -424,13 +446,24 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           ),
           if (_isLoading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
-            child: _isWindows
-                ? (_winController == null
-                      ? const Center(child: CircularProgressIndicator())
-                      : win.Webview(_winController!))
-                : (_controller == null
-                      ? const Center(child: CircularProgressIndicator())
-                      : WebViewWidget(controller: _controller!)),
+            child: Stack(
+              children: [
+                if (_readyToShow)
+                  AnimatedOpacity(
+                    opacity: _readyToShow ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 250),
+                    child: _isWindows
+                        ? win.Webview(_winController!)
+                        : WebViewWidget(controller: _controller!),
+                  ),
+
+                if (!_readyToShow)
+                  Container(
+                    color: Theme.of(context).colorScheme.background,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
