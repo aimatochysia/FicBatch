@@ -31,13 +31,14 @@ class WorkAdapter extends TypeAdapter<Work> {
       readingProgress: fields[17] as ReadingProgress?,
       isDownloaded: fields[18] as bool,
       hasUpdate: fields[19] as bool,
+      summary: fields[20] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Work obj) {
     writer
-      ..writeByte(20)
+      ..writeByte(21)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -77,7 +78,9 @@ class WorkAdapter extends TypeAdapter<Work> {
       ..writeByte(18)
       ..write(obj.isDownloaded)
       ..writeByte(19)
-      ..write(obj.hasUpdate);
+      ..write(obj.hasUpdate)
+      ..writeByte(20)
+      ..write(obj.summary);
   }
 
   @override
