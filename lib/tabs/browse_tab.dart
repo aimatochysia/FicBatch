@@ -550,6 +550,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
       final tagsMap = await _getTags();
       final tags = tagsMap.values.expand((list) => list).toList();
       final stats = await _getStats();
+      final summary = await _getSummary();
 
       DateTime? parseDate(dynamic v) {
         if (v == null) return null;
@@ -597,6 +598,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         hitsCount: hitsCount,
         commentsCount: commentsCount,
         readingProgress: ReadingProgress.empty(),
+        summary: summary.isNotEmpty ? summary : null,
       );
 
       final storage = ref.read(storageProvider);
@@ -717,6 +719,38 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         (k, v) => MapEntry(k, List<String>.from(v)),
       ),
     );
+  }
+
+  Future<String> _getSummary() async {
+    const js = r"""
+    (function() {
+      const el = document.querySelector('div.summary.module blockquote.userstuff');
+      return el ? el.innerText.trim() : '';
+    })();
+  """;
+
+    try {
+      dynamic result;
+      if (_isWindows && _winController != null) {
+        final execResult = await _winController!.executeScript(js);
+        if (execResult is List && execResult.isNotEmpty) {
+          result = execResult.first;
+        } else {
+          result = execResult;
+        }
+      } else if (_controller != null) {
+        result = await _controller!.runJavaScriptReturningResult(js);
+      }
+
+      if (result == null) return '';
+
+      final text = result.toString().trim();
+
+      return text.replaceAll(RegExp(r'^"|"$'), '');
+    } catch (e) {
+      debugPrint('Failed to get summary: $e');
+      return '';
+    }
   }
 
   Future<Map<String, dynamic>> _getStats() async {
