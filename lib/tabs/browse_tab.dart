@@ -28,6 +28,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool _isWindows = Platform.isWindows;
   bool _readyToShow = false;
   String _searchType = 'query';
+  String _currentUrl = '';
 
   @override
   void initState() {
@@ -72,6 +73,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
             await _injectEarlyStyle();
             await _injectReaderMode();
             await _injectHideFilterButton();
+            await _updateCurrentUrl();
             if (mounted) {
               setState(() {
                 _isLoading = false;
@@ -94,11 +96,12 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                 });
                 await _injectEarlyStyle();
               },
-              onPageFinished: (_) async {
+              onPageFinished: (url) async {
                 await _injectReaderMode();
                 await _injectHideFilterButton();
                 if (mounted) {
                   setState(() {
+                    _currentUrl = url;
                     _isLoading = false;
                     _readyToShow = true;
                   });
@@ -285,6 +288,10 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
 
     final uri = Uri.https('archiveofourown.org', '/works/search', params);
 
+    setState(() {
+      _currentUrl = uri.toString();
+    });
+
     if (_isWindows) {
       _winController?.loadUrl(uri.toString());
     } else {
@@ -346,6 +353,9 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                               }
 
                               if (url != null && url.isNotEmpty) {
+                                setState(() {
+                                  _currentUrl = url;
+                                });
                                 if (_isWindows) {
                                   await _winController?.loadUrl(url);
                                 } else {
@@ -369,61 +379,65 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                             icon: const Icon(Icons.bookmark_add),
                             tooltip: 'Save Current Search',
                             onPressed: () async {
-                              final query = _urlController.text.trim();
-                              if (query.isEmpty) return;
+                              final live = await _getCurrentUrl();
+                              final current = (live ?? _currentUrl).trim();
+                              if (mounted) {
+                                setState(() {
+                                  _currentUrl = current;
+                                });
+                              }
+                              if (current.isEmpty) return;
 
-                              final nameController = TextEditingController();
-                              final result = await showDialog<String>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Save Current Search'),
-                                  content: TextField(
-                                    controller: nameController,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Enter a name for this search',
-                                    ),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(ctx),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(
-                                        ctx,
-                                        nameController.text.trim(),
+                              if (_isValidSearchUrl(current)) {
+                                final nameController = TextEditingController();
+                                final result = await showDialog<String>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Save Current Search'),
+                                    content: TextField(
+                                      controller: nameController,
+                                      decoration: const InputDecoration(
+                                        hintText:
+                                            'Enter a name for this search',
                                       ),
-                                      child: const Text('Save'),
                                     ),
-                                  ],
-                                ),
-                              );
-
-                              if (result == null || result.isEmpty) return;
-
-                              final filters = await storage
-                                  .getAdvancedFilters();
-                              final params = {
-                                'work_search[$_searchType]': query,
-                                'commit': 'Search',
-                              };
-                              final uri = Uri.https(
-                                'archiveofourown.org',
-                                '/works/search',
-                                params,
-                              );
-
-                              await storage.saveSearch(
-                                result,
-                                uri.toString(),
-                                filters,
-                              );
-
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Saved search "$result"!'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(
+                                          ctx,
+                                          nameController.text.trim(),
+                                        ),
+                                        child: const Text('Save'),
+                                      ),
+                                    ],
                                   ),
+                                );
+
+                                if (result == null || result.isEmpty) return;
+
+                                final filters = await storage
+                                    .getAdvancedFilters();
+
+                                await storage.saveSearch(
+                                  result,
+                                  current,
+                                  filters,
+                                );
+
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Saved search "$result"!'),
+                                    ),
+                                  );
+                                }
+                              } else {
+                                _showSnackBar(
+                                  'Cannot save a specific work or chapter page.',
                                 );
                               }
                             },
@@ -474,6 +488,28 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     );
   }
 
+  bool _isValidSearchUrl(String url) {
+    debugPrint('Checking URL for validity: $url');
+    if (url.contains('archiveofourown.org/tags/') && url.contains('/works')) {
+      return true;
+    }
+
+    if (url.contains('archiveofourown.org/works?')) {
+      return true;
+    }
+
+    if (url.contains('archiveofourown.org/works/') && !url.contains('?')) {
+      return false;
+    }
+
+    if (url.contains('archiveofourown.org/works/') &&
+        url.contains('/chapters/')) {
+      return false;
+    }
+
+    return false;
+  }
+
   Future<void> _showSavedSearchDialog(
     BuildContext context,
     List<Map<String, dynamic>> saved,
@@ -507,7 +543,12 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                       ),
                       onTap: () {
                         Navigator.pop(ctx);
-                        final url = item['url'] ?? '';
+                        final url = (item['url'] ?? '') as String;
+                        if (mounted) {
+                          setState(() {
+                            _currentUrl = url;
+                          });
+                        }
                         if (_isWindows) {
                           _winController?.loadUrl(url);
                         } else {
@@ -631,6 +672,20 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<String?> _getCurrentUrl() async {
+    return _isWindows
+        ? await _getWindowsCurrentUrl()
+        : await _controller?.currentUrl();
+  }
+
+  Future<void> _updateCurrentUrl() async {
+    final url = await _getCurrentUrl();
+    if (!mounted) return;
+    setState(() {
+      _currentUrl = (url ?? '').trim();
+    });
   }
 
   Future<T?> _getJson<T>(String jsValueExpr) async {
