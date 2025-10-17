@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
-import '../services/storage_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/storage_provider.dart';
 
 class AdvancedSearchScreen extends ConsumerStatefulWidget {
   final Map<String, dynamic> initialFilters;
@@ -110,57 +107,9 @@ class _AdvancedSearchScreenState extends ConsumerState<AdvancedSearchScreen> {
     "commit": "Search",
   };
 
-  void _submit() async {
+  void _submit() {
     final uri = Uri.https("archiveofourown.org", "/works/search", _filters);
     final url = uri.toString();
-
-    final save = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Save this search?'),
-        content: const Text(
-          'Would you like to save this search setup for later?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('No'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Yes'),
-          ),
-        ],
-      ),
-    );
-
-    if (save == true) {
-      final nameController = TextEditingController();
-      final name = await showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Name this search'),
-          content: TextField(
-            controller: nameController,
-            decoration: const InputDecoration(hintText: 'e.g. "catradora"'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      );
-      if (name != null && name.isNotEmpty && context.mounted) {
-        final storage = ref.read(storageProvider);
-        await storage.saveSearch(name, url, _filters);
-      }
-    }
 
     if (context.mounted) {
       Navigator.pop(context, {'url': url, 'filters': _filters});
@@ -317,64 +266,13 @@ class _AdvancedSearchScreenState extends ConsumerState<AdvancedSearchScreen> {
             ElevatedButton.icon(
               icon: const Icon(Icons.search),
               label: const Text('Search'),
-              onPressed: () async {
+              onPressed: () {
                 final uri = Uri.https(
                   'archiveofourown.org',
                   '/works/search',
                   _filters,
                 );
                 final url = uri.toString();
-
-                final save = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Save this search?'),
-                    content: const Text(
-                      'Would you like to save this search setup for later?',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('No'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Yes'),
-                      ),
-                    ],
-                  ),
-                );
-
-                if (save == true) {
-                  final nameController = TextEditingController();
-                  final name = await showDialog<String>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Name this search'),
-                      content: TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(
-                          hintText: 'e.g. Long Fics >50k words',
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('Cancel'),
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              Navigator.pop(ctx, nameController.text.trim()),
-                          child: const Text('Save'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (name != null && name.isNotEmpty && mounted) {
-                    final storage = ref.read(storageProvider);
-                    await storage.saveSearch(name, url, _filters);
-                  }
-                }
 
                 if (context.mounted) {
                   Navigator.pop(context, {'url': url, 'filters': _filters});

@@ -320,127 +320,138 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
+                          PopupMenuButton<String>(
                             icon: const Icon(Icons.search),
-                            tooltip: 'Quick Search',
-                            onPressed: _performSearch,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.tune),
-                            tooltip: 'Advanced Search',
-                            onPressed: () async {
-                              final lastFilters = await storage
-                                  .getAdvancedFilters();
-
-                              final result =
-                                  await Navigator.push<Map<String, dynamic>>(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => AdvancedSearchScreen(
-                                        initialFilters: lastFilters,
-                                      ),
-                                    ),
-                                  );
-
-                              if (result == null) return;
-
-                              final url = result['url'] as String?;
-                              final filters =
-                                  result['filters'] as Map<String, dynamic>?;
-
-                              if (filters != null) {
-                                await storage.saveAdvancedFilters(filters);
-                              }
-
-                              if (url != null && url.isNotEmpty) {
-                                setState(() {
-                                  _currentUrl = url;
-                                });
-                                if (_isWindows) {
-                                  await _winController?.loadUrl(url);
-                                } else {
-                                  await _controller?.loadRequest(
-                                    Uri.parse(url),
-                                  );
-                                }
-                              }
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.bookmarks),
-                            tooltip: 'Saved Searches',
-                            onPressed: () async {
-                              final saved = await storage.getSavedSearches();
-                              if (!context.mounted) return;
-                              await _showSavedSearchDialog(context, saved);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.bookmark_add),
-                            tooltip: 'Save Current Search',
-                            onPressed: () async {
-                              final live = await _getCurrentUrl();
-                              final current = (live ?? _currentUrl).trim();
-                              if (mounted) {
-                                setState(() {
-                                  _currentUrl = current;
-                                });
-                              }
-                              if (current.isEmpty) return;
-
-                              if (_isValidSearchUrl(current)) {
-                                final nameController = TextEditingController();
-                                final result = await showDialog<String>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text('Save Current Search'),
-                                    content: TextField(
-                                      controller: nameController,
-                                      decoration: const InputDecoration(
-                                        hintText:
-                                            'Enter a name for this search',
-                                      ),
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(ctx),
-                                        child: const Text('Cancel'),
-                                      ),
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(
-                                          ctx,
-                                          nameController.text.trim(),
-                                        ),
-                                        child: const Text('Save'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-
-                                if (result == null || result.isEmpty) return;
-
-                                final filters = await storage
+                            tooltip: 'Search Options',
+                            onSelected: (value) async {
+                              if (value == 'quick') {
+                                _performSearch();
+                              } else if (value == 'advanced') {
+                                final lastFilters = await storage
                                     .getAdvancedFilters();
 
-                                await storage.saveSearch(
-                                  result,
-                                  current,
-                                  filters,
-                                );
+                                final result =
+                                    await Navigator.push<Map<String, dynamic>>(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => AdvancedSearchScreen(
+                                          initialFilters: lastFilters,
+                                        ),
+                                      ),
+                                    );
 
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Saved search "$result"!'),
-                                    ),
-                                  );
+                                if (result == null) return;
+                                final url = result['url'] as String?;
+                                final filters =
+                                    result['filters'] as Map<String, dynamic>?;
+
+                                if (filters != null) {
+                                  await storage.saveAdvancedFilters(filters);
                                 }
-                              } else {
-                                _showSnackBar(
-                                  'Cannot save a specific work or chapter page.',
-                                );
+                                if (url != null && url.isNotEmpty) {
+                                  setState(() => _currentUrl = url);
+                                  if (_isWindows) {
+                                    await _winController?.loadUrl(url);
+                                  } else {
+                                    await _controller?.loadRequest(
+                                      Uri.parse(url),
+                                    );
+                                  }
+                                }
                               }
                             },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: 'quick',
+                                child: Text('Quick Search'),
+                              ),
+                              PopupMenuItem(
+                                value: 'advanced',
+                                child: Text('Advanced Search'),
+                              ),
+                            ],
+                          ),
+                          PopupMenuButton<String>(
+                            icon: const Icon(Icons.bookmarks),
+                            tooltip: 'Saved Search Options',
+                            onSelected: (value) async {
+                              if (value == 'saved') {
+                                final saved = await storage.getSavedSearches();
+                                if (!context.mounted) return;
+                                await _showSavedSearchDialog(context, saved);
+                              } else if (value == 'saveCurrent') {
+                                final live = await _getCurrentUrl();
+                                final current = (live ?? _currentUrl).trim();
+                                if (mounted)
+                                  setState(() => _currentUrl = current);
+                                if (current.isEmpty) return;
+
+                                if (_isValidSearchUrl(current)) {
+                                  final nameController =
+                                      TextEditingController();
+                                  final result = await showDialog<String>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      title: const Text('Save Current Search'),
+                                      content: TextField(
+                                        controller: nameController,
+                                        decoration: const InputDecoration(
+                                          hintText:
+                                              'Enter a name for this search',
+                                        ),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(ctx),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(
+                                            ctx,
+                                            nameController.text.trim(),
+                                          ),
+                                          child: const Text('Save'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+
+                                  if (result == null || result.isEmpty) return;
+
+                                  final filters = await storage
+                                      .getAdvancedFilters();
+                                  await storage.saveSearch(
+                                    result,
+                                    current,
+                                    filters,
+                                  );
+
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Saved search "$result"!',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  _showSnackBar(
+                                    'Cannot save a specific work or chapter page.',
+                                  );
+                                }
+                              }
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: 'saved',
+                                child: Text('View Saved Searches'),
+                              ),
+                              PopupMenuItem(
+                                value: 'saveCurrent',
+                                child: Text('Save Current Search'),
+                              ),
+                            ],
                           ),
                         ],
                       ),
