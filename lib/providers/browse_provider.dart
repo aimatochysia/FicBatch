@@ -7,7 +7,6 @@ final readerJsProvider = Provider<String>((ref) {
   return theme == ThemeMode.dark ? _darkModeJs : _lightModeJs;
 });
 
-/// Light mode reader JS
 const _lightModeJs = '''
 (function() {
   if (window.__fb_reader_applied) { try { window.__fb_apply && window.__fb_apply(); } catch(e){} return; }
@@ -74,7 +73,6 @@ const _lightModeJs = '''
 })();
 ''';
 
-/// Dark mode reader JS
 const _darkModeJs = '''
 (function() {
   if (window.__fb_reader_applied) { try { window.__fb_apply && window.__fb_apply(); } catch(e){} return; }

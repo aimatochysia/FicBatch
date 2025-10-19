@@ -30,3 +30,23 @@ class WorkActions {
   Future<void> deleteWork(String id) async => storage.deleteWork(id);
   Future<void> clearLibrary() async => storage.clearAll();
 }
+
+final categoriesProvider = StreamProvider<List<String>>((ref) async* {
+  final storage = ref.watch(storageProvider);
+  yield await storage.getCategories();
+  await for (final e in storage.settingsBox.watch()) {
+    if (e.key == 'categories_list' || e.key == 'categories_map') {
+      yield await storage.getCategories();
+    }
+  }
+});
+
+final categoryWorksProvider = StreamProvider.family<Set<String>, String>((ref, category) async* {
+  final storage = ref.watch(storageProvider);
+  yield await storage.getWorkIdsForCategory(category);
+  await for (final e in storage.settingsBox.watch()) {
+    if (e.key == 'categories_map' || e.key == 'categories_list') {
+      yield await storage.getWorkIdsForCategory(category);
+    }
+  }
+});
