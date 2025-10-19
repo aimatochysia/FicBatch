@@ -13,24 +13,53 @@ class WorkCard extends StatelessWidget {
       onTap: onOpen,
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(8.0),
+          padding: const EdgeInsets.all(6.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 work.title,
-                maxLines: 3,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 6),
-              Text(work.author, maxLines: 1),
-              const Spacer(),
+              const SizedBox(height: 4),
+              Text(work.author, maxLines: 1, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 4),
+              if ((work.summary ?? '').isNotEmpty)
+                Flexible(
+                  child: Text(
+                    work.summary!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              const SizedBox(height: 4),
+              if (work.tags.isNotEmpty)
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 2,
+                  children: work.tags.take(4).map((t) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        t,
+                        style: const TextStyle(fontSize: 11),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              const SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text('${work.wordsCount ?? '-'} words'),
-                  Icon(Icons.book),
+                  const Icon(Icons.book, size: 16),
                 ],
               ),
             ],

@@ -10,6 +10,8 @@ class StorageService {
   static const String worksBoxName = 'works_box';
   static const String settingsBoxName = 'settings_box';
   static bool _initialized = false;
+  static const String _categoriesListKey = 'categories_list';
+  static const String _categoryMapKey = 'categories_map';
 
   Future<void> init() async {
     if (_initialized) return;
@@ -34,7 +36,10 @@ class StorageService {
   Box<dynamic> get settingsBox => Hive.box(settingsBoxName);
 
   List<Work> getAllWorks() => worksBox.values.toList();
-  Future<void> saveWork(Work work) async => await worksBox.put(work.id, work);
+  Future<void> saveWork(Work work) async {
+    await worksBox.put(work.id, work);
+    await assignDefaultCategoryIfNeeded(work.id);
+  }
   Work? getWork(String id) => worksBox.get(id);
   Future<void> deleteWork(String id) async => await worksBox.delete(id);
   Future<void> clearAll() async => await worksBox.clear();
@@ -116,6 +121,123 @@ class StorageService {
     final searches = await getSavedSearches();
     searches.removeWhere((s) => s['name'] == name);
     await settingsBox.put('saved_searches', searches);
+  }
+
+  Future<List<String>> getCategories() async {
+    final raw = settingsBox.get(_categoriesListKey);
+    if (raw == null) return <String>[];
+    return List<String>.from(raw);
+  }
+
+  Future<void> addCategory(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final cats = await getCategories();
+    if (!cats.contains(trimmed)) {
+      cats.add(trimmed);
+      await settingsBox.put(_categoriesListKey, cats);
+      final map = await _getCategoryMap();
+      map.putIfAbsent(trimmed, () => <String>[]);
+      await _saveCategoryMap(map);
+    }
+  }
+
+  Future<void> renameCategory(String oldName, String newName) async {
+    final oldTrim = oldName.trim();
+    final newTrim = newName.trim();
+    if (oldTrim.isEmpty || newTrim.isEmpty || oldTrim == newTrim) return;
+    final cats = await getCategories();
+    final idx = cats.indexOf(oldTrim);
+    if (idx < 0) return;
+    if (!cats.contains(newTrim)) {
+      cats[idx] = newTrim;
+    } else {
+      cats.removeAt(idx);
+    }
+    await settingsBox.put(_categoriesListKey, cats);
+
+    final map = await _getCategoryMap();
+    final works = map.remove(oldTrim) ?? <String>[];
+    final target = map.putIfAbsent(newTrim, () => <String>[]);
+    for (final id in works) {
+      if (!target.contains(id)) target.add(id);
+    }
+    await _saveCategoryMap(map);
+  }
+
+  Future<void> deleteCategory(String name) async {
+    final cats = await getCategories();
+    cats.remove(name);
+    await settingsBox.put(_categoriesListKey, cats);
+    final map = await _getCategoryMap();
+    map.remove(name);
+    await _saveCategoryMap(map);
+  }
+
+  Future<Set<String>> getCategoriesForWork(String workId) async {
+    final map = await _getCategoryMap();
+    final result = <String>{};
+    map.forEach((cat, ids) {
+      if (ids.contains(workId)) result.add(cat);
+    });
+    return result;
+  }
+
+  Future<void> setCategoriesForWork(String workId, Set<String> categories) async {
+    final cats = await getCategories();
+    final map = await _getCategoryMap();
+
+    for (final c in categories) {
+      if (!cats.contains(c)) cats.add(c);
+      map.putIfAbsent(c, () => <String>[]);
+    }
+    await settingsBox.put(_categoriesListKey, cats);
+
+    for (final entry in map.entries) {
+      entry.value.removeWhere((id) => id == workId);
+    }
+
+    if (categories.isEmpty) {
+      await _saveCategoryMap(map);
+      await deleteWork(workId);
+      return;
+    }
+
+    for (final c in categories) {
+      final list = map[c]!;
+      if (!list.contains(workId)) list.add(workId);
+    }
+
+    await _saveCategoryMap(map);
+  }
+
+  Future<void> assignDefaultCategoryIfNeeded(String workId) async {
+    final cats = await getCategories();
+    if (cats.isEmpty) {
+      cats.add('default');
+      await settingsBox.put(_categoriesListKey, cats);
+      final map = await _getCategoryMap();
+      final list = map.putIfAbsent('default', () => <String>[]);
+      if (!list.contains(workId)) list.add(workId);
+      await _saveCategoryMap(map);
+    }
+  }
+
+  Future<Map<String, List<String>>> _getCategoryMap() async {
+    final raw = settingsBox.get(_categoryMapKey);
+    if (raw == null) return <String, List<String>>{};
+    final casted = Map<String, dynamic>.from(raw);
+    return casted.map((k, v) => MapEntry(k, List<String>.from(v)));
+  }
+
+  Future<void> _saveCategoryMap(Map<String, List<String>> map) async {
+    await settingsBox.put(_categoryMapKey, map);
+  }
+
+  Future<Set<String>> getWorkIdsForCategory(String category) async {
+    final map = await _getCategoryMap();
+    final list = map[category] ?? const <String>[];
+    return Set<String>.from(list);
   }
 }
 

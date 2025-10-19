@@ -7,15 +7,19 @@ import 'package:webview_windows/webview_windows.dart' as win;
 
 import '../providers/theme_provider.dart';
 import '../providers/storage_provider.dart';
-import '../providers/browse_provider.dart';
+import '../providers/navigation_provider.dart';
 import '../models/work.dart';
 import '../models/reading_progress.dart';
 import '../services/storage_service.dart';
 import '../widgets/advanced_search.dart';
+import 'browse/browse_navigation.dart';
+import 'browse/browse_search.dart';
+import 'browse/ao3_extractors.dart';
+import 'browse/browse_toolbar.dart';
+import 'browse/inject_listing_buttons.dart';
 
 class BrowseTab extends ConsumerStatefulWidget {
   const BrowseTab({super.key});
-
   @override
   ConsumerState<BrowseTab> createState() => _BrowseTabState();
 }
@@ -29,23 +33,61 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool _readyToShow = false;
   String _searchType = 'query';
   String _currentUrl = '';
+  Brightness? _lastBrightness;
+  String? _pendingThemeMode;
+  bool _pageReady = false;
+  bool _coverVisible = false;
+  bool get _winInited => _winController != null && _winController!.value.isInitialized;
+  static const int _browseTabIndex = 3;
+  DateTime? _lastInjectorPing;
+
+  void _clearQueryInput() {
+    if (!mounted) return;
+    setState(() => _urlController.clear());
+  }
 
   @override
   void initState() {
     super.initState();
     _initWebView();
+    ref.listen<int>(navigationProvider, (prev, next) {
+      final wasBrowse = (prev ?? _browseTabIndex) == _browseTabIndex;
+      final isBrowse = next == _browseTabIndex;
+      if (wasBrowse != isBrowse) {
+        _clearQueryInput();
+      }
+    });
   }
 
-  Future<void> _injectReaderMode() async {
-    final readerJs = ref.read(readerJsProvider);
-    try {
-      if (_isWindows && _winController != null) {
-        await _winController!.executeScript(readerJs);
-      } else if (_controller != null) {
-        await _controller!.runJavaScript(readerJs);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final b = Theme.of(context).brightness;
+    if (_lastBrightness != b) {
+      _lastBrightness = b;
+      final mode = b == Brightness.dark ? 'dark' : 'light';
+      if (_isWindows) {
+        final ready = _winController != null && _winController!.value.isInitialized && _pageReady;
+        if (ready) {
+          _injectThemeStyle();
+        } else {
+          _pendingThemeMode = mode;
+        }
+      } else {
+        final ready = _controller != null && _pageReady;
+        if (ready) {
+          _injectThemeStyle();
+        } else {
+          _pendingThemeMode = mode;
+        }
       }
-    } catch (e) {
-      debugPrint('⚠️ Reader mode failed: $e');
+      final ready = _isWindows
+          ? (_winController != null && _winController!.value.isInitialized && _pageReady)
+          : (_controller != null && _pageReady);
+      if (ready) {
+        _injectEarlyStyle();
+      }
+      _pulseCover();
     }
   }
 
@@ -56,23 +98,52 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
         _winController = win.WebviewController();
         await _winController!.initialize();
         await _winController!.setBackgroundColor(Colors.transparent);
-        await _winController!.setPopupWindowPolicy(
-          win.WebviewPopupWindowPolicy.deny,
-        );
-
+        await _winController!.setPopupWindowPolicy(win.WebviewPopupWindowPolicy.deny);
+        _winController!.webMessage.listen((event) {
+          try {
+            final s = event?.toString() ?? '';
+            if (s.isNotEmpty) _handleInjectedMessage(s);
+          } catch (_) {}
+        });
         _winController!.loadingState.listen((state) async {
           final loading = state == win.LoadingState.loading;
           if (mounted) {
             setState(() {
               _isLoading = loading;
-              if (loading) _readyToShow = false;
+              _readyToShow = !loading ? _readyToShow : false;
+              _pageReady = !loading;
+              if (loading) _coverVisible = true;
             });
           }
-
           if (!loading) {
+            try {
+              final probe = await _winController!.executeScript('1+1');
+              debugPrint('[BrowseTab] Windows JS probe ok: $probe');
+            } catch (e) {
+              debugPrint('⚠️ Windows JS probe failed: $e');
+            }
             await _injectEarlyStyle();
-            await _injectReaderMode();
-            await _injectHideFilterButton();
+            await _injectThemeStyle();
+            await _diagnoseListingDom('pre-inject (Windows)');
+            await injectListingButtons(
+              isWindows: _isWindows,
+              winController: _winController,
+              controller: _controller,
+              dartDebugPrint: debugPrint,
+            );
+            Future.delayed(const Duration(milliseconds: 800), () async {
+              if (!mounted) return;
+              await injectListingButtons(
+                isWindows: _isWindows,
+                winController: _winController,
+                controller: _controller,
+                dartDebugPrint: debugPrint,
+              );
+            });
+            if (_pendingThemeMode != null) {
+              _pendingThemeMode = null;
+              await _injectThemeStyle();
+            }
             await _updateCurrentUrl();
             if (mounted) {
               setState(() {
@@ -80,25 +151,60 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                 _readyToShow = true;
               });
             }
+            _pulseCover();
           }
         });
-
         await _winController!.loadUrl('https://archiveofourown.org/');
       } else {
-        final c = WebViewController()
+        final c = WebViewController();
+        setState(() => _controller = c);
+        c
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..addJavaScriptChannel('FB', onMessageReceived: (m) {
+            final s = m.message;
+            if (s.isNotEmpty) _handleInjectedMessage(s);
+          })
           ..setNavigationDelegate(
             NavigationDelegate(
               onPageStarted: (_) async {
                 setState(() {
                   _isLoading = true;
                   _readyToShow = false;
+                  _pageReady = false;
                 });
+                _pulseCover();
                 await _injectEarlyStyle();
+                await _injectThemeStyle();
               },
               onPageFinished: (url) async {
-                await _injectReaderMode();
-                await _injectHideFilterButton();
+                try {
+                  final res = await c.runJavaScriptReturningResult('1+1');
+                  debugPrint('[BrowseTab] Mobile JS probe ok: $res');
+                } catch (e) {
+                  debugPrint('⚠️ Mobile JS probe failed: $e');
+                }
+                _pageReady = true;
+                await _injectThemeStyle();
+                await _diagnoseListingDom('pre-inject (Mobile)');
+                await injectListingButtons(
+                  isWindows: _isWindows,
+                  winController: _winController,
+                  controller: _controller,
+                  dartDebugPrint: debugPrint,
+                );
+                Future.delayed(const Duration(milliseconds: 800), () async {
+                  if (!mounted) return;
+                  await injectListingButtons(
+                    isWindows: _isWindows,
+                    winController: _winController,
+                    controller: _controller,
+                    dartDebugPrint: debugPrint,
+                  );
+                });
+                if (_pendingThemeMode != null) {
+                  _pendingThemeMode = null;
+                  await _injectThemeStyle();
+                }
                 if (mounted) {
                   setState(() {
                     _currentUrl = url;
@@ -106,11 +212,11 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                     _readyToShow = true;
                   });
                 }
+                _pulseCover();
               },
             ),
           )
           ..loadRequest(Uri.parse('https://archiveofourown.org/'));
-        setState(() => _controller = c);
       }
     } catch (e) {
       debugPrint('WebView init failed: $e');
@@ -118,184 +224,509 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     }
   }
 
-  Future<void> _injectEarlyStyle() async {
-    const css = '''
-    (function() {
-      const s = document.createElement('style');
-      s.id = 'early-dark-style';
-      s.textContent = `
-        html, body {
-          background-color: #121212 !important;
-          color: #e0e0e0 !important;
-        }
-        * {
-          background-color: transparent !important;
-          color: inherit !important;
-        }
-      `;
-      document.documentElement.prepend(s);
-    })();
-  ''';
-    try {
-      if (_isWindows && _winController != null) {
-        await _winController!.executeScript(css);
-      } else if (_controller != null) {
-        await _controller!.runJavaScript(css);
-      }
-    } catch (e) {
-      debugPrint('⚠️ Early style injection failed: $e');
-    }
-  }
-
-  Future<void> _injectHideFilterButton() async {
-    const js = r"""
-(function() {
-  function injectAO3FilterMod() {
-    try {
-      const origButton = document.querySelector('a#go_to_filters');
-      const origForm = document.querySelector('form#work-filters.filters');
-      if (!origButton || !origForm) {
-        return false;
-      }
-
-      const origParent = origButton.parentElement;
-      const nextSibling = origButton.nextSibling;
-
-      document.querySelector('#work-filters-mod')?.remove();
-      document.querySelector('#go_to_filters-mod')?.remove();
-      document.querySelector('#ao3-filter-backdrop-mod')?.remove();
-
-      const btn = origButton.cloneNode(true);
-      const form = origForm.cloneNode(true);
-
-      function modIds(el) {
-        if (!el || el.nodeType !== 1) return;
-        if (el.id) el.id += '-mod';
-        if (el.classList && el.classList.length)
-          el.className = Array.from(el.classList).map(c => c + '-mod').join(' ');
-        for (const child of el.querySelectorAll('*[id], *[class]')) {
-          if (child.id) child.id += '-mod';
-          if (child.classList && child.classList.length)
-            child.className = Array.from(child.classList).map(c => c + '-mod').join(' ');
-        }
-      }
-      modIds(btn);
-      modIds(form);
-
-      let stash = document.getElementById('ao3-filters-stash');
-      if (!stash) {
-        stash = document.createElement('div');
-        stash.id = 'ao3-filters-stash';
-        stash.style.display = 'none';
-        document.body.appendChild(stash);
-      }
-      stash.appendChild(origButton);
-      stash.appendChild(origForm);
-
-      if (origParent) {
-        if (nextSibling) origParent.insertBefore(btn, nextSibling);
-        else origParent.appendChild(btn);
-      } else {
-        document.body.appendChild(btn);
-      }
-
-      Object.assign(form.style, {
-        position: 'fixed',
-        top: '15%',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        background: '#fff',
-        border: '1px solid rgba(0,0,0,0.15)',
-        borderRadius: '8px',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-        padding: '20px',
-        width: 'min(95%, 800px)',
-        maxHeight: '75vh',
-        overflowY: 'auto',
-        zIndex: '100000',
-        display: 'none',
-        opacity: '0',
-        transition: 'opacity 0.25s ease'
-      });
-
-      const backdrop = document.createElement('div');
-      backdrop.id = 'ao3-filter-backdrop-mod';
-      Object.assign(backdrop.style, {
-        position: 'fixed',
-        inset: '0',
-        background: 'rgba(0,0,0,0.35)',
-        zIndex: '99999',
-        display: 'none'
-      });
-      document.body.appendChild(backdrop);
-      document.body.appendChild(form);
-
-      const open = () => {
-        form.style.display = 'block';
-        backdrop.style.display = 'block';
-        requestAnimationFrame(() => form.style.opacity = '1');
-        document.body.style.overflow = 'hidden';
-        document.body.className = document.body.className.replace(/\bfilters-\w+\b/g, '');
-      };
-      const close = () => {
-        form.style.opacity = '0';
-        backdrop.style.display = 'none';
-        document.body.style.overflow = '';
-        setTimeout(() => (form.style.display = 'none'), 10);
-      };
-
-      btn.addEventListener('click', e => {
-        e.preventDefault();
-        form.style.display === 'block' ? close() : open();
-      });
-      backdrop.addEventListener('click', close);
-      document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && form.style.display === 'block') close();
-      });
-
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  const tryInject = () => {
-    if (!injectAO3FilterMod()) setTimeout(tryInject, 10);
-  };
-  if (document.readyState === 'complete' || document.readyState === 'interactive')
-    setTimeout(tryInject, 20);
-  else
-    document.addEventListener('DOMContentLoaded', () => setTimeout(tryInject, 20));
-})();
-""";
-
+  Future<void> _injectThemeStyle() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final mode = isDark ? 'dark' : 'light';
+    final js = _buildDarkReaderBootstrapJs(mode);
+    debugPrint(
+      '[BrowseTab] Injecting dark mode "$mode" on ${_isWindows ? 'Windows' : 'Mobile'}',
+    );
     try {
       if (_isWindows && _winController != null) {
         await _winController!.executeScript(js);
       } else if (_controller != null) {
         await _controller!.runJavaScript(js);
       }
+      debugPrint('[BrowseTab] Injection script executed for mode "$mode".');
     } catch (e) {
-      debugPrint('⚠️ Filter form injection failed: $e');
+      debugPrint('⚠️ Theme injection failed: $e');
     }
   }
 
-  void _performSearch() {
-    final query = _urlController.text.trim();
-    if (query.isEmpty) return;
+  String _buildDarkReaderBootstrapJs(String mode) {
+    return '''
+(function () {
+  try {
+    var MODE = '${mode}' === 'dark' ? 'dark' : 'light';
+    var CDN = 'https://cdn.jsdelivr.net/npm/darkreader@4.9.58/darkreader.min.js';
+    var SCRIPT_ID = '__fb_darkreader_script';
+    var pendingMode = MODE;
 
-    final params = {'work_search[$_searchType]': query, 'commit': 'Search'};
+    function applyMode(mode) {
+      try {
+        if (mode === 'dark') {
+          try { if (window.DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          var theme = { brightness: 100, contrast: 100, sepia: 0 };
+          var fixes = {
+            invert: [],
+            ignoreInlineStyle: [],
+            ignoreImageAnalysis: [],
+            css: `
+.pagination a, .pagination .current, .actions a, .navigation.actions a,
+.listbox .actions a, .listbox .heading .actions a, .listbox.group ul li a,
+ul.actions li a, ol.actions li a, .secondary .actions a, .filters .group .actions a {
+  background-color: #2a2f32 !important; color: #e8e6e3 !important; border: 1px solid #3a3e41 !important;
+}
+input, select, textarea, button {
+  background-color: #262a2b !important; color: #e8e6e3 !important; border: 1px solid #3a3e41 !important;
+}
+a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
+`
+          };
+          DarkReader.enable(theme, fixes);
+          try { document.documentElement.style.colorScheme = 'dark'; } catch(_) {}
+        } else {
+          if (window.DarkReader && DarkReader.isEnabled && DarkReader.isEnabled()) {
+            DarkReader.disable();
+          }
+          try { document.documentElement.style.colorScheme = 'light'; } catch(_) {}
+        }
+      } catch (e) {
+        console.log('[FB-DarkReader] applyMode error', e);
+      }
+    }
 
-    final uri = Uri.https('archiveofourown.org', '/works/search', params);
-
-    setState(() {
-      _currentUrl = uri.toString();
-    });
-
-    if (_isWindows) {
-      _winController?.loadUrl(uri.toString());
+    if (!window.__fb_setTheme) {
+      window.__fb_setTheme = function(m) {
+        pendingMode = (m === 'dark') ? 'dark' : 'light';
+        if (window.DarkReader) applyMode(pendingMode);
+      };
     } else {
-      _controller?.loadRequest(uri);
+      pendingMode = MODE;
+    }
+
+    if (window.DarkReader) {
+      applyMode(pendingMode);
+    } else {
+      var s = document.getElementById(SCRIPT_ID);
+      if (!s) {
+        s = document.createElement('script');
+        s.id = SCRIPT_ID;
+        s.src = CDN;
+        s.async = true;
+        s.onload = function() {
+          try { if (DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          applyMode(pendingMode);
+        };
+        s.onerror = function(e) { console.log('[FB-DarkReader] script load error', e); };
+        (document.head || document.documentElement).appendChild(s);
+      } else {
+        s.addEventListener('load', function(){ applyMode(pendingMode); }, { once: true });
+      }
+    }
+
+    if (window.__fb_setTheme) window.__fb_setTheme(MODE);
+  } catch (e) {
+    console.log('[FB-DarkReader] bootstrap error', e);
+  }
+})();
+''';
+  }
+
+  Future<void> _injectEarlyStyle() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const jsRemove = r"""
+      (function(){
+        try { document.getElementById('fb-early-dark-style')?.remove(); } catch(_) {}
+      })();
+    """;
+    const jsDark = r"""
+      (function(){
+        try {
+          const prev = document.getElementById('fb-early-dark-style');
+          if (prev) prev.remove();
+          const s = document.createElement('style');
+          s.id = 'fb-early-dark-style';
+          s.textContent = `
+            html, body { background-color: #121212 !important; color: #e0e0e0 !important; }
+            * { background-color: transparent !important; color: inherit !important; }
+          `;
+          (document.documentElement || document.body).prepend(s);
+          console.log('[FB-Dark] early style injected');
+        } catch(e) { console.log('[FB-Dark] early style error', e); }
+      })();
+    """;
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(isDark ? jsDark : jsRemove);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(isDark ? jsDark : jsRemove);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Early style injection failed: $e');
+    }
+  }
+
+  void _pulseCover({Duration duration = const Duration(milliseconds: 200)}) {
+    if (!mounted) return;
+    setState(() => _coverVisible = true);
+    Future.delayed(duration, () {
+      if (!mounted) return;
+      setState(() => _coverVisible = false);
+    });
+  }
+
+  Future<void> _setThemeInWebView(String mode) async {
+    debugPrint(
+      '[BrowseTab] _setThemeInWebView skipped; using reinjection path for "$mode"',
+    );
+  }
+
+  void _performSearch() {
+    performQuickSearch(
+      searchType: _searchType,
+      urlController: _urlController,
+      isWindows: _isWindows,
+      winController: _winController,
+      controller: _controller,
+      onUrlChange: (u) => setState(() => _currentUrl = u),
+    );
+  }
+
+  Future<T?> _getJson<T>(String jsValueExpr) async {
+    final wrapped = 'JSON.stringify(($jsValueExpr))';
+    try {
+      if (_isWindows && _winController != null) {
+        final raw = await _winController!.executeScript(wrapped);
+        final s = raw is List
+            ? (raw.isNotEmpty ? raw.first?.toString() ?? '' : '')
+            : (raw?.toString() ?? '');
+        final decoded =
+            _tryJsonDecode<T>(s) ?? _tryJsonDecode<T>(_stripQuotes(s));
+        return decoded;
+      } else if (_controller != null) {
+        final result = await _controller!.runJavaScriptReturningResult(wrapped);
+        final str = _asDartString(result);
+        final decoded =
+            _tryJsonDecode<T>(str) ?? _tryJsonDecode<T>(_stripQuotes(str));
+        return decoded;
+      }
+    } catch (e) {
+      debugPrint('⚠️ _getJson failed: $e');
+    }
+    return null;
+  }
+
+  String _asDartString(Object? val) {
+    if (val == null) return '';
+    if (val is String) return val;
+    return val.toString();
+  }
+
+  T? _tryJsonDecode<T>(String s) {
+    try {
+      return jsonDecode(s) as T;
+    } catch (_) {
+      try {
+        final stripped = _stripQuotes(s);
+        return jsonDecode(stripped) as T;
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  String _stripQuotes(String s) {
+    final t = s.trim();
+    if (t.length >= 2 &&
+        ((t.startsWith('"') && t.endsWith('"')) ||
+            (t.startsWith("'") && t.endsWith("'")))) {
+      return t.substring(1, t.length - 1).replaceAll(r'\"', '"');
+    }
+    return t;
+  }
+
+  Future<String> _getInnerText(String selector) async {
+    final sel = jsonEncode(selector);
+    final js =
+        '''
+      (function(){
+        var el = document.querySelector($sel);
+        return el ? el.textContent.trim() : "";
+      })()
+    ''';
+    final value = await _getJson<String>(js);
+    return value ?? '';
+  }
+
+  Future<Map<String, List<String>>> _getTags() async {
+    const js = r'''
+    (function() {
+      const result = {};
+      const groups = document.querySelectorAll("dl.work.meta.group dt");
+      groups.forEach(dt => {
+        const key = dt.classList[0];
+        const next = dt.nextElementSibling;
+        if (!key || !next) return;
+        const tags = Array.from(next.querySelectorAll("a.tag")).map(a => a.textContent.trim());
+        if (tags.length > 0) result[key] = tags;
+      });
+      return JSON.stringify(result);
+    })();
+  ''';
+
+    try {
+      dynamic raw;
+      if (_isWindows && _winController != null) {
+        raw = await _winController!.executeScript(js);
+        if (raw is List && raw.isNotEmpty) raw = raw.first;
+      } else if (_controller != null) {
+        raw = await _controller!.runJavaScriptReturningResult(js);
+      }
+      final s = raw?.toString() ?? '{}';
+      final jsonStr = s.startsWith('"') && s.endsWith('"')
+          ? _stripQuotes(s)
+          : s;
+      final decoded = jsonDecode(jsonStr) as Map;
+      return Map<String, List<String>>.from(
+        decoded.map((k, v) => MapEntry(k.toString(), List<String>.from(v))),
+      );
+    } catch (e) {
+      debugPrint('Failed to get tags: $e');
+      return <String, List<String>>{};
+    }
+  }
+
+  Future<String> _getSummary() async {
+    const js = r"""
+    (function() {
+      const el = document.querySelector('div.summary.module blockquote.userstuff');
+      return el ? el.innerText.trim() : '';
+    })();
+  """;
+
+    try {
+      dynamic result;
+      if (_isWindows && _winController != null) {
+        final execResult = await _winController!.executeScript(js);
+        if (execResult is List && execResult.isNotEmpty) {
+          result = execResult.first;
+        } else {
+          result = execResult;
+        }
+      } else if (_controller != null) {
+        result = await _controller!.runJavaScriptReturningResult(js);
+      }
+
+      if (result == null) return '';
+
+      final text = result.toString().trim();
+
+      return text.replaceAll(RegExp(r'^"|"$'), '');
+    } catch (e) {
+      debugPrint('Failed to get summary: $e');
+      return '';
+    }
+  }
+
+  Future<Map<String, dynamic>> _getStats() async {
+    final js = '''
+      (function(){
+        function text(sel){
+          var el = document.querySelector(sel);
+          return el ? el.textContent.trim() : "";
+        }
+        function intFrom(sel){
+          var t = text(sel).replace(/[\\s,]/g, "");
+          var m = t.match(/\\d+/);
+          return m ? parseInt(m[0], 10) : 0;
+        }
+        function isoFrom(sel){
+          var t = text(sel);
+          if (!t) return null;
+          var d = new Date(t);
+          if (isNaN(d.getTime())) return null;
+          return d.toISOString();
+        }
+        function chapterCount(){
+          var t = text('dd.chapters');
+          var m = t.match(/(\\d+)(?:\\s*\\/\\s*(\\d+|\\?))?/);
+          if (!m) return 0;
+          return parseInt(m[1], 10);
+        }
+        return {
+          published: isoFrom('dd.published'),
+          updated: (isoFrom('dd.updated') || isoFrom('dd.status') || null),
+          words: intFrom('dd.words'),
+          chapters: chapterCount(),
+          kudos: intFrom('dd.kudos'),
+          hits: intFrom('dd.hits'),
+          comments: intFrom('dd.comments')
+        };
+      })()
+    ''';
+    final map = await _getJson<Map<String, dynamic>>(js);
+    return map ??
+        <String, dynamic>{
+          'published': null,
+          'updated': null,
+          'words': 0,
+          'chapters': 0,
+          'kudos': 0,
+          'hits': 0,
+          'comments': 0,
+        };
+  }
+
+  Future<Work?> _extractWorkFromPage() async {
+    final url = _isWindows
+        ? await _getWindowsCurrentUrl()
+        : await _controller?.currentUrl();
+    if (url == null) return null;
+    final workId = _extractWorkId(url);
+    if (workId == null) return null;
+
+    final meta = await fetchAo3MetaCombined(_getJson);
+    if (meta == null) return null;
+
+    return buildWorkFromMeta(workId, meta);
+  }
+
+  Future<void> _confirmAndSaveToLibrary() async {
+    try {
+      final work = await _extractWorkFromPage();
+      if (work == null) {
+        _showSnackBar('Not a valid AO3 work page.');
+        return;
+      }
+
+      final storage = ref.read(storageProvider);
+      final cats = await storage.getCategories();
+
+      if (cats.isEmpty) {
+        await storage.saveWork(work);
+        if (context.mounted)
+          _showSnackBar('Saved “${work.title}” to library (default).');
+        return;
+      }
+
+      final selected = <String>{};
+      final newCats = await showDialog<Set<String>>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: const Text('Select categories'),
+            content: SizedBox(
+              width: 420,
+              child: ListView(
+                shrinkWrap: true,
+                children: cats.map((c) {
+                  final checked = selected.contains(c);
+                  return CheckboxListTile(
+                    dense: true,
+                    title: Text(c),
+                    value: checked,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true) {
+                          selected.add(c);
+                        } else {
+                          selected.remove(c);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => Navigator.pop(ctx, Set<String>.from(selected)),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (newCats == null || newCats.isEmpty) return;
+
+      await storage.saveWork(work);
+      await storage.setCategoriesForWork(work.id, newCats);
+      if (context.mounted)
+        _showSnackBar('Saved “${work.title}” to ${newCats.join(', ')}.');
+    } catch (e, st) {
+      debugPrint('Save confirm failed: $e\n$st');
+      _showSnackBar('Failed to extract AO3 metadata.');
+    }
+  }
+
+  Future<void> _openAdvancedSearch() async {
+    final storage = ref.read(storageProvider);
+    final lastFilters = await storage.getAdvancedFilters();
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdvancedSearchScreen(initialFilters: lastFilters),
+      ),
+    );
+    if (result == null) return;
+
+    final url = result['url'] as String?;
+    final filters = result['filters'] as Map<String, dynamic>?;
+    if (filters != null) {
+      await storage.saveAdvancedFilters(filters);
+    }
+    if (url != null && url.isNotEmpty) {
+      if (!mounted) return;
+      setState(() => _currentUrl = url);
+      if (_isWindows) {
+        await _winController?.loadUrl(url);
+      } else {
+        await _controller?.loadRequest(Uri.parse(url));
+      }
+    }
+  }
+
+  Future<void> _saveCurrentSearch() async {
+    final storage = ref.read(storageProvider);
+    final live = await _getCurrentUrl();
+    final current = (live ?? _currentUrl).trim();
+    if (mounted) setState(() => _currentUrl = current);
+    if (current.isEmpty) return;
+
+    if (_isValidSearchUrl(current)) {
+      final nameController = TextEditingController();
+      final result = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Save Current Search'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(
+              hintText: 'Enter a name for this search',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+      if (result == null || result.isEmpty) return;
+
+      final filters = await storage.getAdvancedFilters();
+      await storage.saveSearch(result, current, filters);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Saved search "$result"!')));
+      }
+    } else {
+      _showSnackBar('Cannot save a specific work or chapter page.');
     }
   }
 
@@ -303,194 +734,106 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   Widget build(BuildContext context) {
     final storage = ref.read(storageProvider);
 
+    final onHome = () => goHome(
+      isWindows: _isWindows,
+      winController: _winController,
+      controller: _controller,
+      onUrlChange: (u) => setState(() => _currentUrl = u),
+      clearInput: _clearQueryInput,
+    );
+    final onBack = () => goBack(
+      isWindows: _isWindows,
+      winController: _winController,
+      controller: _controller,
+      clearInput: _clearQueryInput,
+    );
+    final onForward = () => goForward(
+      isWindows: _isWindows,
+      winController: _winController,
+      controller: _controller,
+      clearInput: _clearQueryInput,
+    );
+    final onRefresh = () => refreshPage(
+      isWindows: _isWindows,
+      winController: _winController,
+      controller: _controller,
+    );
+
     return SafeArea(
       child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _urlController,
-                    decoration: InputDecoration(
-                      hintText: 'Search AO3 works...',
-                      border: const OutlineInputBorder(),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.search),
-                            tooltip: 'Search Options',
-                            onSelected: (value) async {
-                              if (value == 'quick') {
-                                _performSearch();
-                              } else if (value == 'advanced') {
-                                final lastFilters = await storage
-                                    .getAdvancedFilters();
-
-                                final result =
-                                    await Navigator.push<Map<String, dynamic>>(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => AdvancedSearchScreen(
-                                          initialFilters: lastFilters,
-                                        ),
-                                      ),
-                                    );
-
-                                if (result == null) return;
-                                final url = result['url'] as String?;
-                                final filters =
-                                    result['filters'] as Map<String, dynamic>?;
-
-                                if (filters != null) {
-                                  await storage.saveAdvancedFilters(filters);
-                                }
-                                if (url != null && url.isNotEmpty) {
-                                  setState(() => _currentUrl = url);
-                                  if (_isWindows) {
-                                    await _winController?.loadUrl(url);
-                                  } else {
-                                    await _controller?.loadRequest(
-                                      Uri.parse(url),
-                                    );
-                                  }
-                                }
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'quick',
-                                child: Text('Quick Search'),
-                              ),
-                              PopupMenuItem(
-                                value: 'advanced',
-                                child: Text('Advanced Search'),
-                              ),
-                            ],
-                          ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.bookmarks),
-                            tooltip: 'Saved Search Options',
-                            onSelected: (value) async {
-                              if (value == 'saved') {
-                                final saved = await storage.getSavedSearches();
-                                if (!context.mounted) return;
-                                await _showSavedSearchDialog(context, saved);
-                              } else if (value == 'saveCurrent') {
-                                final live = await _getCurrentUrl();
-                                final current = (live ?? _currentUrl).trim();
-                                if (mounted)
-                                  setState(() => _currentUrl = current);
-                                if (current.isEmpty) return;
-
-                                if (_isValidSearchUrl(current)) {
-                                  final nameController =
-                                      TextEditingController();
-                                  final result = await showDialog<String>(
-                                    context: context,
-                                    builder: (ctx) => AlertDialog(
-                                      title: const Text('Save Current Search'),
-                                      content: TextField(
-                                        controller: nameController,
-                                        decoration: const InputDecoration(
-                                          hintText:
-                                              'Enter a name for this search',
-                                        ),
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(ctx),
-                                          child: const Text('Cancel'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(
-                                            ctx,
-                                            nameController.text.trim(),
-                                          ),
-                                          child: const Text('Save'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-
-                                  if (result == null || result.isEmpty) return;
-
-                                  final filters = await storage
-                                      .getAdvancedFilters();
-                                  await storage.saveSearch(
-                                    result,
-                                    current,
-                                    filters,
-                                  );
-
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Saved search "$result"!',
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                } else {
-                                  _showSnackBar(
-                                    'Cannot save a specific work or chapter page.',
-                                  );
-                                }
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'saved',
-                                child: Text('View Saved Searches'),
-                              ),
-                              PopupMenuItem(
-                                value: 'saveCurrent',
-                                child: Text('Save Current Search'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    onSubmitted: (_) => _performSearch(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.chrome_reader_mode),
-                  tooltip: 'Apply Reader Mode',
-                  onPressed: _injectReaderMode,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.save_alt),
-                  tooltip: 'Save to Library',
-                  onPressed: _saveToLibrary,
-                ),
-              ],
+            child: BrowseToolbar(
+              urlController: _urlController,
+              onHome: onHome,
+              onBack: onBack,
+              onForward: onForward,
+              onRefresh: onRefresh,
+              onQuickSearch: _performSearch,
+              onAdvancedSearch: () => openAdvancedSearch(
+                context: context,
+                storage: storage,
+                isWindows: _isWindows,
+                winController: _winController,
+                controller: _controller,
+                onUrlChange: (u) => setState(() => _currentUrl = u),
+              ),
+              onSaveCurrentSearch: () => saveCurrentSearch(
+                context: context,
+                storage: storage,
+                getCurrentUrl: _getCurrentUrl,
+                currentUrl: _currentUrl,
+                setCurrentUrl: (u) => setState(() => _currentUrl = u),
+              ),
+              onLoadSavedSearch: () async {
+                final saved = await storage.getSavedSearches();
+                if (!mounted) return;
+                await showSavedSearchDialog(
+                  context: context,
+                  saved: saved,
+                  storage: storage,
+                  isWindows: _isWindows,
+                  winController: _winController,
+                  controller: _controller,
+                  setCurrentUrl: (u) => setState(() => _currentUrl = u),
+                );
+              },
+              onSaveToLibrary: _confirmAndSaveToLibrary,
             ),
           ),
           if (_isLoading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: Stack(
               children: [
-                if (_readyToShow)
-                  AnimatedOpacity(
-                    opacity: _readyToShow ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 250),
+                AnimatedOpacity(
+                  opacity: _readyToShow ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 250),
+                  child: SizedBox.expand(
                     child: _isWindows
-                        ? win.Webview(_winController!)
-                        : WebViewWidget(controller: _controller!),
+                        ? (_winInited
+                              ? win.Webview(_winController!)
+                              : const SizedBox.shrink())
+                        : (_controller != null
+                              ? WebViewWidget(controller: _controller!)
+                              : const SizedBox.shrink()),
                   ),
-
+                ),
                 if (!_readyToShow)
                   Container(
                     color: Theme.of(context).colorScheme.background,
                     child: const Center(child: CircularProgressIndicator()),
                   ),
+                IgnorePointer(
+                  ignoring: !_coverVisible,
+                  child: AnimatedOpacity(
+                    opacity: _coverVisible ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 120),
+                    child: Container(
+                      color: Theme.of(context).colorScheme.background,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -501,24 +844,37 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
 
   bool _isValidSearchUrl(String url) {
     debugPrint('Checking URL for validity: $url');
-    if (url.contains('archiveofourown.org/tags/') && url.contains('/works')) {
-      return true;
-    }
+    try {
+      final u = Uri.parse(url);
+      if (u.host != 'archiveofourown.org') return false;
+      final segs = u.pathSegments;
+      final hasQuery = u.query.isNotEmpty;
 
-    if (url.contains('archiveofourown.org/works?')) {
-      return true;
-    }
+      if (segs.length >= 2 && segs.first == 'tags' && segs.last == 'works') {
+        return true;
+      }
 
-    if (url.contains('archiveofourown.org/works/') && !url.contains('?')) {
+      if (segs.length == 1 && segs.first == 'works' && hasQuery) {
+        return true;
+      }
+
+      if (segs.length >= 2 &&
+          segs[0] == 'works' &&
+          segs[1] == 'search' &&
+          hasQuery) {
+        return true;
+      }
+
+      if (segs.isNotEmpty && segs[0] == 'works') {
+        if (segs.length >= 2 && RegExp(r'^\d+$').hasMatch(segs[1]))
+          return false;
+        if (segs.length >= 3 && segs[2] == 'chapters') return false;
+      }
+
+      return false;
+    } catch (_) {
       return false;
     }
-
-    if (url.contains('archiveofourown.org/works/') &&
-        url.contains('/chapters/')) {
-      return false;
-    }
-
-    return false;
   }
 
   Future<void> _showSavedSearchDialog(
@@ -677,12 +1033,35 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   }
 
   Future<String?> _getWindowsCurrentUrl() async {
+    if (_winController == null) return null;
     try {
-      final url = await _getJson<String>('window.location.href');
-      return url;
-    } catch (_) {
-      return null;
-    }
+      final direct = await _winController!.executeScript(
+        'window.location.href',
+      );
+      if (direct is List && direct.isNotEmpty) {
+        return direct.first.toString().trim();
+      }
+      if (direct is String && direct.isNotEmpty) {
+        return _stripQuotes(direct).trim();
+      }
+    } catch (_) {}
+
+    try {
+      final json = await _winController!.executeScript(
+        'JSON.stringify(window.location.href)',
+      );
+      if (json is List && json.isNotEmpty) {
+        final s = json.first.toString();
+        final decoded = _tryJsonDecode<String>(s) ?? _stripQuotes(s);
+        return decoded.trim();
+      }
+      if (json is String && json.isNotEmpty) {
+        final decoded = _tryJsonDecode<String>(json) ?? _stripQuotes(json);
+        return decoded.trim();
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   Future<String?> _getCurrentUrl() async {
@@ -699,172 +1078,120 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
     });
   }
 
-  Future<T?> _getJson<T>(String jsValueExpr) async {
-    final wrapped = 'JSON.stringify(($jsValueExpr))';
+  Future<void> _diagnoseListingDom(String stage) async {
     try {
-      if (_isWindows && _winController != null) {
-        final raw = await _winController!.executeScript(wrapped);
-        final decoded = _tryJsonDecode<T>(raw);
-        return decoded;
-      } else if (_controller != null) {
-        final result = await _controller!.runJavaScriptReturningResult(wrapped);
-        final str = _asDartString(result);
-        final decoded = _tryJsonDecode<T>(str);
-        return decoded;
+      final diag = await _getJson<Map<String, dynamic>>(r'''
+        (function(){
+          function q(sel){ try { return document.querySelectorAll(sel).length; } catch(_) { return -1; } }
+          return {
+            ready: document.readyState,
+            lists: q('ol.work.index.group, ol.index.group'),
+            items: q('li.blurb[role="article"], li.work.blurb.group'),
+            hasFB: !!(window.FB && window.FB.postMessage),
+            hasWV: !!(window.chrome && chrome.webview && chrome.webview.postMessage),
+            path: location.pathname
+          };
+        })()
+      ''');
+      debugPrint('[BrowseTab][injector][diag][$stage] ${jsonEncode(diag ?? {})}');
+    } catch (e) {
+      debugPrint('[BrowseTab][injector][diag][$stage] failed: $e');
+    }
+  }
+
+  void _handleInjectedMessage(String s) async {
+    try {
+      final obj = jsonDecode(s) as Map<String, dynamic>;
+      final type = obj['type'] as String? ?? '';
+      if (type == 'saveWorkFromListing') {
+        final workId = obj['workId']?.toString() ?? '';
+        final meta = Map<String, dynamic>.from(obj['meta'] ?? {});
+        if (workId.isEmpty || meta.isEmpty) return;
+        await _handleSaveFromListing(workId, meta);
+      } else if (type == 'saveWorkError') {
+        final id = obj['workId']?.toString() ?? '';
+        final err = obj['error']?.toString() ?? 'Unknown error';
+        if (mounted) _showSnackBar('Failed to save $id: $err');
+      } else if (type == 'injectorLog') {
+        _lastInjectorPing = DateTime.now();
+        final level = obj['level']?.toString() ?? 'info';
+        final msg = obj['msg']?.toString() ?? '';
+        final ctx = obj['ctx']?.toString() ?? '';
+        debugPrint('[BrowseTab][injector][$level] $msg${ctx.isNotEmpty ? ' | ' + ctx : ''}');
       }
     } catch (e) {
-      debugPrint('⚠️ _getJson failed: $e');
+      debugPrint('Injected message parse error: $e');
     }
-    return null;
   }
 
-  String _asDartString(Object? val) {
-    if (val == null) return '';
-    if (val is String) return val;
-    return val.toString();
-  }
-
-  T? _tryJsonDecode<T>(String s) {
+  Future<void> _handleSaveFromListing(
+    String workId,
+    Map<String, dynamic> meta,
+  ) async {
     try {
-      return jsonDecode(s) as T;
-    } catch (_) {
-      try {
-        final stripped = _stripQuotes(s);
-        return jsonDecode(stripped) as T;
-      } catch (_) {
-        return null;
-      }
-    }
-  }
+      final work = buildWorkFromMeta(workId, meta);
+      final storage = ref.read(storageProvider);
+      final cats = await storage.getCategories();
 
-  String _stripQuotes(String s) {
-    final t = s.trim();
-    if (t.length >= 2 &&
-        ((t.startsWith('"') && t.endsWith('"')) ||
-            (t.startsWith("'") && t.endsWith("'")))) {
-      return t.substring(1, t.length - 1).replaceAll(r'\"', '"');
-    }
-    return t;
-  }
-
-  Future<String> _getInnerText(String selector) async {
-    final sel = jsonEncode(selector);
-    final js =
-        '''
-      (function(){
-        var el = document.querySelector($sel);
-        return el ? el.textContent.trim() : "";
-      })()
-    ''';
-    final value = await _getJson<String>(js);
-    return value ?? '';
-  }
-
-  Future<Map<String, List<String>>> _getTags() async {
-    const js = r'''
-    (function() {
-      const result = {};
-      const groups = document.querySelectorAll("dl.work.meta.group dt");
-      groups.forEach(dt => {
-        const key = dt.classList[0];
-        const next = dt.nextElementSibling;
-        if (!key || !next) return;
-        const tags = Array.from(next.querySelectorAll("a.tag")).map(a => a.textContent.trim());
-        if (tags.length > 0) result[key] = tags;
-      });
-      return JSON.stringify(result);
-    })();
-  ''';
-
-    final jsonStr = _isWindows
-        ? await _winController!.executeScript(js)
-        : await _controller!.runJavaScriptReturningResult(js);
-
-    return Map<String, List<String>>.from(
-      (jsonDecode(jsonStr) as Map).map(
-        (k, v) => MapEntry(k, List<String>.from(v)),
-      ),
-    );
-  }
-
-  Future<String> _getSummary() async {
-    const js = r"""
-    (function() {
-      const el = document.querySelector('div.summary.module blockquote.userstuff');
-      return el ? el.innerText.trim() : '';
-    })();
-  """;
-
-    try {
-      dynamic result;
-      if (_isWindows && _winController != null) {
-        final execResult = await _winController!.executeScript(js);
-        if (execResult is List && execResult.isNotEmpty) {
-          result = execResult.first;
-        } else {
-          result = execResult;
-        }
-      } else if (_controller != null) {
-        result = await _controller!.runJavaScriptReturningResult(js);
+      if (cats.isEmpty) {
+        await storage.saveWork(work);
+        if (mounted) _showSnackBar('Saved “${work.title}” (default).');
+        return;
       }
 
-      if (result == null) return '';
+      final selected = <String>{};
+      final chosen = await showDialog<Set<String>>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: const Text('Select categories'),
+            content: SizedBox(
+              width: 420,
+              child: ListView(
+                shrinkWrap: true,
+                children: cats.map((c) {
+                  final checked = selected.contains(c);
+                  return CheckboxListTile(
+                    dense: true,
+                    title: Text(c),
+                    value: checked,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true)
+                          selected.add(c);
+                        else
+                          selected.remove(c);
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => Navigator.pop(ctx, Set<String>.from(selected)),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        ),
+      );
 
-      final text = result.toString().trim();
+      if (chosen == null || chosen.isEmpty) return;
 
-      return text.replaceAll(RegExp(r'^"|"$'), '');
+      await storage.saveWork(work);
+      await storage.setCategoriesForWork(work.id, chosen);
+      if (mounted)
+        _showSnackBar('Saved “${work.title}” to ${chosen.join(', ')}.');
     } catch (e) {
-      debugPrint('Failed to get summary: $e');
-      return '';
+      debugPrint('Save from listing failed: $e');
+      if (mounted) _showSnackBar('Failed to save from listing.');
     }
-  }
-
-  Future<Map<String, dynamic>> _getStats() async {
-    final js = '''
-      (function(){
-        function text(sel){
-          var el = document.querySelector(sel);
-          return el ? el.textContent.trim() : "";
-        }
-        function intFrom(sel){
-          var t = text(sel).replace(/[\\s,]/g, "");
-          var m = t.match(/\\d+/);
-          return m ? parseInt(m[0], 10) : 0;
-        }
-        function isoFrom(sel){
-          var t = text(sel);
-          if (!t) return null;
-          var d = new Date(t);
-          if (isNaN(d.getTime())) return null;
-          return d.toISOString();
-        }
-        function chapterCount(){
-          var t = text('dd.chapters');
-          var m = t.match(/(\\d+)(?:\\s*\\/\\s*(\\d+|\\?))?/);
-          if (!m) return 0;
-          return parseInt(m[1], 10);
-        }
-        return {
-          published: isoFrom('dd.published'),
-          updated: (isoFrom('dd.updated') || isoFrom('dd.status') || null),
-          words: intFrom('dd.words'),
-          chapters: chapterCount(),
-          kudos: intFrom('dd.kudos'),
-          hits: intFrom('dd.hits'),
-          comments: intFrom('dd.comments')
-        };
-      })()
-    ''';
-    final map = await _getJson<Map<String, dynamic>>(js);
-    return map ??
-        <String, dynamic>{
-          'published': null,
-          'updated': null,
-          'words': 0,
-          'chapters': 0,
-          'kudos': 0,
-          'hits': 0,
-          'comments': 0,
-        };
   }
 }

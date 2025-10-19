@@ -65,7 +65,7 @@ class MainScaffold extends ConsumerWidget {
     final notifier = ref.read(navigationProvider.notifier);
 
     return Scaffold(
-      body: _tabs[index],
+      body: IndexedStack(index: index, children: _tabs),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: notifier.setIndex,
