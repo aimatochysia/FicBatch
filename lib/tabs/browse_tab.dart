@@ -40,7 +40,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool get _winInited => _winController != null && _winController!.value.isInitialized;
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
-  bool _listenerSetUp = false;
 
   void _clearQueryInput() {
     if (!mounted) return;
@@ -56,18 +55,6 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    
-    // Set up the listener once
-    if (!_listenerSetUp) {
-      _listenerSetUp = true;
-      ref.listen<int>(navigationProvider, (prev, next) {
-        final wasBrowse = (prev ?? _browseTabIndex) == _browseTabIndex;
-        final isBrowse = next == _browseTabIndex;
-        if (wasBrowse != isBrowse) {
-          _clearQueryInput();
-        }
-      });
-    }
     
     final b = Theme.of(context).brightness;
     if (_lastBrightness != b) {
@@ -767,6 +754,15 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
 
   @override
   Widget build(BuildContext context) {
+    // Listen to navigation changes - must be in build method for Riverpod
+    ref.listen<int>(navigationProvider, (prev, next) {
+      final wasBrowse = (prev ?? _browseTabIndex) == _browseTabIndex;
+      final isBrowse = next == _browseTabIndex;
+      if (wasBrowse != isBrowse) {
+        _clearQueryInput();
+      }
+    });
+    
     final storage = ref.read(storageProvider);
 
     final onHome = () => goHome(

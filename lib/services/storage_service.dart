@@ -251,9 +251,16 @@ class StorageService {
 }
 
 Future<void> migrateHive() async {
-  // Access without type parameter to get Box<dynamic> from the already-opened Box<Work>
-  final Box<dynamic> box = Hive.box(StorageService.worksBoxName);
-  final keys = box.keys.toList();
+  try {
+    // Check if box is open before accessing
+    if (!Hive.isBoxOpen(StorageService.worksBoxName)) {
+      debugPrint('[migrateHive] Box is not open, skipping migration');
+      return;
+    }
+    
+    // Access without type parameter to get Box<dynamic> from the already-opened Box<Work>
+    final Box<dynamic> box = Hive.box(StorageService.worksBoxName);
+    final keys = box.keys.toList();
 
   for (final key in keys) {
     final raw = box.get(key);
@@ -282,5 +289,10 @@ Future<void> migrateHive() async {
     } else {
       print('Unexpected data type for key $key: ${raw.runtimeType}');
     }
+  }
+  } catch (e, stackTrace) {
+    debugPrint('[migrateHive] Error during migration: $e');
+    debugPrint('Stack trace: $stackTrace');
+    // Don't rethrow - migration failures shouldn't prevent app startup
   }
 }
