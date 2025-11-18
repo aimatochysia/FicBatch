@@ -17,6 +17,7 @@ import 'browse/browse_search.dart';
 import 'browse/ao3_extractors.dart';
 import 'browse/browse_toolbar.dart';
 import 'browse/inject_listing_buttons.dart';
+import 'reader_screen.dart';
 
 class BrowseTab extends ConsumerStatefulWidget {
   const BrowseTab({super.key});
@@ -125,6 +126,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
               controller: _controller,
               dartDebugPrint: debugPrint,
             );
+            await _highlightSavedWorks();
             Future.delayed(const Duration(milliseconds: 800), () async {
               if (!mounted) return;
               await injectListingButtons(
@@ -133,6 +135,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                 controller: _controller,
                 dartDebugPrint: debugPrint,
               );
+              await _highlightSavedWorks();
             });
             if (_pendingThemeMode != null) {
               _pendingThemeMode = null;
@@ -160,6 +163,28 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
           })
           ..setNavigationDelegate(
             NavigationDelegate(
+              onNavigationRequest: (request) async {
+                // Intercept work page navigation to open reader
+                final url = request.url;
+                final workIdMatch = RegExp(r'/works/(\d+)(?:/chapters/\d+)?$').firstMatch(url);
+                if (workIdMatch != null && !url.contains('view_full_work')) {
+                  final workId = workIdMatch.group(1)!;
+                  final storage = ref.read(storageProvider);
+                  final work = storage.getWork(workId);
+                  
+                  if (work != null) {
+                    // Work is in library, open reader
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ReaderScreen(work: work),
+                      ),
+                    );
+                    return NavigationDecision.prevent;
+                  }
+                }
+                return NavigationDecision.navigate;
+              },
               onPageStarted: (_) async {
                 setState(() {
                   _isLoading = true;
@@ -186,6 +211,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   controller: _controller,
                   dartDebugPrint: debugPrint,
                 );
+                await _highlightSavedWorks();
                 Future.delayed(const Duration(milliseconds: 800), () async {
                   if (!mounted) return;
                   await injectListingButtons(
@@ -194,6 +220,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                     controller: _controller,
                     dartDebugPrint: debugPrint,
                   );
+                  await _highlightSavedWorks();
                 });
                 if (_pendingThemeMode != null) {
                   _pendingThemeMode = null;
@@ -392,6 +419,62 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
     debugPrint(
       '[BrowseTab] _setThemeInWebView skipped; using reinjection path for "$mode"',
     );
+  }
+
+  Future<void> _highlightSavedWorks() async {
+    final storage = ref.read(storageProvider);
+    final works = storage.getAllWorks();
+    final savedIds = works.map((w) => w.id).toList();
+    
+    final idsJson = jsonEncode(savedIds);
+    final js = '''
+      (function() {
+        try {
+          const savedIds = $idsJson;
+          const savedSet = new Set(savedIds);
+          
+          function highlightWork(li) {
+            const idMatch = (li.id || '').match(/work_(\\d+)/);
+            if (!idMatch) return;
+            
+            const workId = idMatch[1];
+            if (savedSet.has(workId)) {
+              li.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
+              li.style.opacity = '0.7';
+            }
+          }
+          
+          const lists = document.querySelectorAll('ol.work.index.group, ol.index.group');
+          lists.forEach(list => {
+            const items = list.querySelectorAll('li.blurb[role="article"], li.work.blurb.group');
+            items.forEach(highlightWork);
+          });
+          
+          // Watch for new items
+          if (!window.__fb_highlight_mo) {
+            window.__fb_highlight_mo = new MutationObserver(function() {
+              lists.forEach(list => {
+                const items = list.querySelectorAll('li.blurb[role="article"], li.work.blurb.group');
+                items.forEach(highlightWork);
+              });
+            });
+            window.__fb_highlight_mo.observe(document.documentElement, { childList: true, subtree: true });
+          }
+        } catch (e) {
+          console.log('[FB] highlight error', e);
+        }
+      })();
+    ''';
+    
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Highlight saved works failed: $e');
+    }
   }
 
   void _performSearch() {

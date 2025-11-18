@@ -39,7 +39,7 @@ Future<void> injectListingButtons({
 
     async function saveWorkById(id){
       log('debug', 'saveWorkById fetch', id);
-      const resp = await fetch('/works/' + id, { credentials: 'same-origin' });
+      const resp = await fetch('/works/' + id + '?view_full_work=true&view_adult=true', { credentials: 'same-origin' });
       if (!resp.ok) { log('error', 'fetch failed', String(resp.status)); throw new Error('HTTP ' + resp.status); }
       const html = await resp.text();
       const parser = new DOMParser();
