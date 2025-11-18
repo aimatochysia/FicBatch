@@ -17,7 +17,7 @@ class SettingsTab extends ConsumerWidget {
           children: [
             ListTile(
               title: const Text('Theme'),
-              subtitle: Text(theme.toString()),
+              subtitle: Text(theme == ThemeMode.dark ? 'Dark' : 'Light'),
               trailing: PopupMenuButton<ThemeMode>(
                 onSelected: notifier.setMode,
                 itemBuilder: (context) => [
@@ -28,10 +28,6 @@ class SettingsTab extends ConsumerWidget {
                   const PopupMenuItem(
                     value: ThemeMode.dark,
                     child: Text('Dark'),
-                  ),
-                  const PopupMenuItem(
-                    value: ThemeMode.system,
-                    child: Text('System'),
                   ),
                 ],
               ),
