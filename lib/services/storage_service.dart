@@ -242,7 +242,7 @@ class StorageService {
 }
 
 Future<void> migrateHive() async {
-  final Box<dynamic> box = Hive.box(StorageService.worksBoxName);
+  final Box<Work> box = Hive.box<Work>(StorageService.worksBoxName);
   final keys = box.keys.toList();
 
   for (final key in keys) {

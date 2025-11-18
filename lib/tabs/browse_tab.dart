@@ -40,6 +40,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool get _winInited => _winController != null && _winController!.value.isInitialized;
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
+  bool _listenerSetUp = false;
 
   void _clearQueryInput() {
     if (!mounted) return;
@@ -50,18 +51,24 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   void initState() {
     super.initState();
     _initWebView();
-    ref.listen<int>(navigationProvider, (prev, next) {
-      final wasBrowse = (prev ?? _browseTabIndex) == _browseTabIndex;
-      final isBrowse = next == _browseTabIndex;
-      if (wasBrowse != isBrowse) {
-        _clearQueryInput();
-      }
-    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    
+    // Set up the listener once
+    if (!_listenerSetUp) {
+      _listenerSetUp = true;
+      ref.listen<int>(navigationProvider, (prev, next) {
+        final wasBrowse = (prev ?? _browseTabIndex) == _browseTabIndex;
+        final isBrowse = next == _browseTabIndex;
+        if (wasBrowse != isBrowse) {
+          _clearQueryInput();
+        }
+      });
+    }
+    
     final b = Theme.of(context).brightness;
     if (_lastBrightness != b) {
       _lastBrightness = b;
@@ -225,7 +232,21 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   }
 
   Future<void> _injectThemeStyle() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (!mounted) return;
+    
+    // Use cached brightness if available, otherwise try to get it safely
+    Brightness? brightness = _lastBrightness;
+    if (brightness == null) {
+      try {
+        brightness = Theme.of(context).brightness;
+      } catch (e) {
+        // If Theme.of(context) fails, use light as default
+        debugPrint('⚠️ Could not get theme brightness, using light mode: $e');
+        brightness = Brightness.light;
+      }
+    }
+    
+    final isDark = brightness == Brightness.dark;
     final mode = isDark ? 'dark' : 'light';
     final js = _buildDarkReaderBootstrapJs(mode);
     debugPrint(
@@ -324,7 +345,21 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
   }
 
   Future<void> _injectEarlyStyle() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (!mounted) return;
+    
+    // Use cached brightness if available, otherwise try to get it safely
+    Brightness? brightness = _lastBrightness;
+    if (brightness == null) {
+      try {
+        brightness = Theme.of(context).brightness;
+      } catch (e) {
+        // If Theme.of(context) fails, use light as default
+        debugPrint('⚠️ Could not get theme brightness for early style, using light mode: $e');
+        brightness = Brightness.light;
+      }
+    }
+    
+    final isDark = brightness == Brightness.dark;
     const jsRemove = r"""
       (function(){
         try { document.getElementById('fb-early-dark-style')?.remove(); } catch(_) {}
