@@ -6,7 +6,6 @@ import 'providers/theme_provider.dart';
 import 'providers/navigation_provider.dart';
 import 'providers/storage_provider.dart';
 import 'services/storage_service.dart';
-import 'dart:async' show unawaited;
 
 import 'tabs/home_tab.dart';
 import 'tabs/library_tab.dart';
@@ -19,6 +18,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final storage = StorageService();
+  await storage.init();
 
   runApp(
     ProviderScope(
@@ -26,7 +26,6 @@ Future<void> main() async {
       child: const Ao3ReaderApp(),
     ),
   );
-  unawaited(storage.init());
 }
 
 class Ao3ReaderApp extends ConsumerWidget {
