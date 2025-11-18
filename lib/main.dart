@@ -18,7 +18,15 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final storage = StorageService();
-  await storage.init();
+  
+  // Initialize storage with error handling
+  try {
+    await storage.init();
+  } catch (e, stackTrace) {
+    // Log the error but continue to show the app
+    debugPrint('Storage initialization error: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
 
   runApp(
     ProviderScope(

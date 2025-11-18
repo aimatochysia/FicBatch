@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:xml/xml.dart';
 import '../models/work.dart';
@@ -16,20 +17,28 @@ class StorageService {
   Future<void> init() async {
     if (_initialized) return;
 
-    _prefs ??= await SharedPreferences.getInstance();
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
 
-    await Hive.initFlutter();
+      await Hive.initFlutter();
 
-    if (!Hive.isAdapterRegistered(0))
-      Hive.registerAdapter(ReadingProgressAdapter());
-    if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(WorkAdapter());
+      if (!Hive.isAdapterRegistered(0))
+        Hive.registerAdapter(ReadingProgressAdapter());
+      if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(WorkAdapter());
 
-    await Hive.openBox<Work>(worksBoxName);
-    await Hive.openBox(settingsBoxName);
+      await Hive.openBox<Work>(worksBoxName);
+      await Hive.openBox(settingsBoxName);
 
-    await migrateHive();
+      await migrateHive();
 
-    _initialized = true;
+      _initialized = true;
+    } catch (e, stackTrace) {
+      debugPrint('StorageService.init error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      // Mark as initialized even on error to prevent infinite retry loops
+      _initialized = true;
+      rethrow;
+    }
   }
 
   Box<Work> get worksBox => Hive.box<Work>(worksBoxName);
