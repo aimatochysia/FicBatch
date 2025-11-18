@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -75,28 +76,39 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _initWebView() async {
-    final controller = WebViewController();
-    setState(() => _controller = controller);
+    try {
+      final controller = WebViewController();
+      setState(() => _controller = controller);
 
-    controller
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
-        _handleMessage(message.message);
-      })
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (url) async {
-            setState(() => _isLoading = false);
-            await _extractChapters();
-            await _applyFontSize();
-            await _restoreReadingPosition();
-          },
-        ),
-      );
+      controller
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
+          _handleMessage(message.message);
+        })
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (url) async {
+              setState(() => _isLoading = false);
+              await _extractChapters();
+              await _applyFontSize();
+              await _restoreReadingPosition();
+            },
+          ),
+        );
 
-    final url =
-        'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
-    await controller.loadRequest(Uri.parse(url));
+      final url =
+          'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
+      await controller.loadRequest(Uri.parse(url));
+    } catch (e, stackTrace) {
+      debugPrint('WebView initialization error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading reader: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _extractChapters() async {
