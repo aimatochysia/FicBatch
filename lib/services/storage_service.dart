@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:xml/xml.dart';
 import '../models/work.dart';
@@ -16,20 +17,28 @@ class StorageService {
   Future<void> init() async {
     if (_initialized) return;
 
-    _prefs ??= await SharedPreferences.getInstance();
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
 
-    await Hive.initFlutter();
+      await Hive.initFlutter();
 
-    if (!Hive.isAdapterRegistered(0))
-      Hive.registerAdapter(ReadingProgressAdapter());
-    if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(WorkAdapter());
+      if (!Hive.isAdapterRegistered(0))
+        Hive.registerAdapter(ReadingProgressAdapter());
+      if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(WorkAdapter());
 
-    await Hive.openBox<Work>(worksBoxName);
-    await Hive.openBox(settingsBoxName);
+      await Hive.openBox<Work>(worksBoxName);
+      await Hive.openBox(settingsBoxName);
 
-    await migrateHive();
+      await migrateHive();
 
-    _initialized = true;
+      _initialized = true;
+    } catch (e, stackTrace) {
+      debugPrint('StorageService.init error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      // Mark as initialized even on error to prevent infinite retry loops
+      _initialized = true;
+      rethrow;
+    }
   }
 
   Box<Work> get worksBox => Hive.box<Work>(worksBoxName);
@@ -242,8 +251,16 @@ class StorageService {
 }
 
 Future<void> migrateHive() async {
-  final Box<dynamic> box = Hive.box(StorageService.worksBoxName);
-  final keys = box.keys.toList();
+  try {
+    // Check if box is open before accessing
+    if (!Hive.isBoxOpen(StorageService.worksBoxName)) {
+      debugPrint('[migrateHive] Box is not open, skipping migration');
+      return;
+    }
+    
+    // Access without type parameter to get Box<dynamic> from the already-opened Box<Work>
+    final Box<dynamic> box = Hive.box(StorageService.worksBoxName);
+    final keys = box.keys.toList();
 
   for (final key in keys) {
     final raw = box.get(key);
@@ -272,5 +289,10 @@ Future<void> migrateHive() async {
     } else {
       print('Unexpected data type for key $key: ${raw.runtimeType}');
     }
+  }
+  } catch (e, stackTrace) {
+    debugPrint('[migrateHive] Error during migration: $e');
+    debugPrint('Stack trace: $stackTrace');
+    // Don't rethrow - migration failures shouldn't prevent app startup
   }
 }

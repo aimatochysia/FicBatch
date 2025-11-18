@@ -1,12 +1,13 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'providers/theme_provider.dart';
 import 'providers/navigation_provider.dart';
 import 'providers/storage_provider.dart';
 import 'services/storage_service.dart';
-import 'dart:async' show unawaited;
 
 import 'tabs/home_tab.dart';
 import 'tabs/library_tab.dart';
@@ -18,7 +19,22 @@ import 'tabs/settings_tab.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize WebView platform for Android/iOS
+  if (Platform.isAndroid || Platform.isIOS) {
+    // WebView platform is automatically initialized on these platforms
+    // This is just to ensure WidgetsFlutterBinding is ready
+  }
+
   final storage = StorageService();
+  
+  // Initialize storage with error handling
+  try {
+    await storage.init();
+  } catch (e, stackTrace) {
+    // Log the error but continue to show the app
+    debugPrint('Storage initialization error: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
 
   runApp(
     ProviderScope(
@@ -26,7 +42,6 @@ Future<void> main() async {
       child: const Ao3ReaderApp(),
     ),
   );
-  unawaited(storage.init());
 }
 
 class Ao3ReaderApp extends ConsumerWidget {

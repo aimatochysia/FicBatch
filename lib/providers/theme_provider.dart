@@ -7,29 +7,25 @@ final themeProvider = StateNotifierProvider<ThemeNotifier, ThemeMode>(
 );
 
 class ThemeNotifier extends StateNotifier<ThemeMode> {
-  ThemeNotifier() : super(ThemeMode.system) {
+  ThemeNotifier() : super(ThemeMode.light) {
     _load();
   }
 
   Future<void> _load() async {
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString('theme_mode');
-    if (raw == 'light')
-      state = ThemeMode.light;
-    else if (raw == 'dark')
+    if (raw == 'dark') {
       state = ThemeMode.dark;
-    else
-      state = ThemeMode.system;
+    } else {
+      // Default to light, no system option
+      state = ThemeMode.light;
+    }
   }
 
   Future<void> setMode(ThemeMode mode) async {
     state = mode;
     final sp = await SharedPreferences.getInstance();
-    final raw = mode == ThemeMode.light
-        ? 'light'
-        : mode == ThemeMode.dark
-        ? 'dark'
-        : 'system';
+    final raw = mode == ThemeMode.dark ? 'dark' : 'light';
     await sp.setString('theme_mode', raw);
   }
 }
