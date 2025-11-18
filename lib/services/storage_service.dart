@@ -242,7 +242,8 @@ class StorageService {
 }
 
 Future<void> migrateHive() async {
-  final Box<Work> box = Hive.box<Work>(StorageService.worksBoxName);
+  // Access as dynamic to allow migration of both Map and Work types
+  final Box<dynamic> box = Hive.box<dynamic>(StorageService.worksBoxName);
   final keys = box.keys.toList();
 
   for (final key in keys) {
