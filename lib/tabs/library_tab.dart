@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
 import '../repositories/work_repository.dart';
+import 'reader_screen.dart';
 
 class LibraryTab extends ConsumerStatefulWidget {
   const LibraryTab({super.key});
@@ -171,58 +172,68 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
       itemBuilder: (context, i) {
         final w = works[i];
         return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  w.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+          child: InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ReaderScreen(work: w),
                 ),
-                const SizedBox(height: 4),
-                Text('by ${w.author}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                if ((w.summary ?? '').isNotEmpty)
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    w.summary!,
-                    maxLines: 3,
+                    w.title,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                const Spacer(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      onPressed: () async {
-                        final json = const JsonEncoder.withIndent('  ').convert(w.toJson());
-                        await showDialog(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Work JSON'),
-                            content: SizedBox(
-                              width: double.maxFinite,
-                              child: SingleChildScrollView(child: SelectableText(json)),
+                  const SizedBox(height: 4),
+                  Text('by ${w.author}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  if ((w.summary ?? '').isNotEmpty)
+                    Text(
+                      w.summary!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  const Spacer(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: () async {
+                          final json = const JsonEncoder.withIndent('  ').convert(w.toJson());
+                          await showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Work JSON'),
+                              content: SizedBox(
+                                width: double.maxFinite,
+                                child: SingleChildScrollView(child: SelectableText(json)),
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+                              ],
                             ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-                            ],
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.code),
-                      tooltip: 'Show JSON',
-                    ),
-                    IconButton(
-                      onPressed: () => _editCategoriesForWork(context, w.id),
-                      icon: const Icon(Icons.folder_open),
-                      tooltip: 'Edit Categories',
-                    ),
-                  ],
-                ),
-              ],
+                          );
+                        },
+                        icon: const Icon(Icons.code),
+                        tooltip: 'Show JSON',
+                      ),
+                      IconButton(
+                        onPressed: () => _editCategoriesForWork(context, w.id),
+                        icon: const Icon(Icons.folder_open),
+                        tooltip: 'Edit Categories',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         );

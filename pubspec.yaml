@@ -21,6 +21,8 @@ dependencies:
   url_launcher: ^6.1.5
   shared_preferences: ^2.1.1
   webview_flutter: ^4.8.0
+  webview_flutter_android: ^3.16.0
+  webview_flutter_wkwebview: ^3.13.0
   webview_windows: ^0.4.0
   path_provider: ^2.1.2
   xml: ^6.3.0
