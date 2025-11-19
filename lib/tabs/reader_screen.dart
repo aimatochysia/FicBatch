@@ -77,6 +77,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _initWebView() async {
     try {
+      // Skip webview_flutter on Windows - use alternative approach or show message
+      if (Platform.isWindows) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Reader screen on Windows is not yet supported. Please use the Browse tab to read works.'),
+                  duration: Duration(seconds: 5),
+                ),
+              );
+            }
+          });
+        }
+        return;
+      }
+      
       final controller = WebViewController();
       
       controller
