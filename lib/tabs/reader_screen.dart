@@ -78,8 +78,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _initWebView() async {
     try {
       final controller = WebViewController();
-      setState(() => _controller = controller);
-
+      
       controller
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
@@ -88,7 +87,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         ..setNavigationDelegate(
           NavigationDelegate(
             onPageFinished: (url) async {
-              setState(() => _isLoading = false);
+              if (mounted) {
+                setState(() => _isLoading = false);
+              }
               await _extractChapters();
               await _applyFontSize();
               await _restoreReadingPosition();
@@ -99,14 +100,28 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       final url =
           'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
       await controller.loadRequest(Uri.parse(url));
+      
+      if (mounted) {
+        setState(() => _controller = controller);
+      }
     } catch (e, stackTrace) {
       debugPrint('WebView initialization error: $e');
       debugPrint('Stack trace: $stackTrace');
+      
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading reader: $e')),
-        );
+        
+        // Schedule the snackbar to show after the frame is built
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error loading reader: $e'),
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+        });
       }
     }
   }

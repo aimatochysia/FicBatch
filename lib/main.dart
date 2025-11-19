@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import 'providers/theme_provider.dart';
 import 'providers/navigation_provider.dart';
@@ -20,9 +22,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize WebView platform for Android/iOS
-  if (Platform.isAndroid || Platform.isIOS) {
-    // WebView platform is automatically initialized on these platforms
-    // This is just to ensure WidgetsFlutterBinding is ready
+  if (Platform.isAndroid) {
+    WebViewPlatform.instance = AndroidWebViewController.platform;
+  } else if (Platform.isIOS) {
+    WebViewPlatform.instance = WebKitWebViewController.platform;
   }
 
   final storage = StorageService();
