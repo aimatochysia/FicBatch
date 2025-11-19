@@ -23,9 +23,9 @@ Future<void> main() async {
 
   // Initialize WebView platform for Android/iOS
   if (Platform.isAndroid) {
-    WebViewPlatform.instance = AndroidWebViewController.platform;
+    AndroidWebViewPlatform.registerWith();
   } else if (Platform.isIOS) {
-    WebViewPlatform.instance = WebKitWebViewController.platform;
+    WebKitWebViewPlatform.registerWith();
   }
 
   final storage = StorageService();
