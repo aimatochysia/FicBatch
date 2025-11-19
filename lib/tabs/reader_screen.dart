@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_windows/webview_windows.dart' as win;
 import '../models/work.dart';
 import '../models/reading_progress.dart';
 import '../models/history_entry.dart';
@@ -22,6 +23,8 @@ class ReaderScreen extends ConsumerStatefulWidget {
 
 class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   WebViewController? _controller;
+  win.WebviewController? _winController;
+  bool _isWindows = Platform.isWindows;
   bool _isLoading = true;
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
@@ -77,50 +80,62 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   Future<void> _initWebView() async {
     try {
-      // Skip webview_flutter on Windows - use alternative approach or show message
-      if (Platform.isWindows) {
+      if (_isWindows) {
+        // Windows webview
+        _winController = win.WebviewController();
+        await _winController!.initialize();
+        await _winController!.setBackgroundColor(Colors.transparent);
+        
+        _winController!.webMessage.listen((event) {
+          try {
+            final s = event?.toString() ?? '';
+            if (s.isNotEmpty) _handleMessage(s);
+          } catch (e) {
+            debugPrint('Error handling Windows webview message: $e');
+          }
+        });
+        
+        await _winController!.loadUrl(
+          'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
+        );
+        
+        // Wait a bit for page to load then extract chapters
+        await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
           setState(() => _isLoading = false);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Reader screen on Windows is not yet supported. Please use the Browse tab to read works.'),
-                  duration: Duration(seconds: 5),
-                ),
-              );
-            }
-          });
+          await _extractChapters();
+          await _applyFontSize();
+          await _restoreReadingPosition();
         }
-        return;
-      }
-      
-      final controller = WebViewController();
-      
-      controller
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
-          _handleMessage(message.message);
-        })
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (url) async {
-              if (mounted) {
-                setState(() => _isLoading = false);
-              }
-              await _extractChapters();
-              await _applyFontSize();
-              await _restoreReadingPosition();
-            },
-          ),
-        );
+      } else {
+        // Android/iOS webview
+        final controller = WebViewController();
+        
+        controller
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
+            _handleMessage(message.message);
+          })
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onPageFinished: (url) async {
+                if (mounted) {
+                  setState(() => _isLoading = false);
+                }
+                await _extractChapters();
+                await _applyFontSize();
+                await _restoreReadingPosition();
+              },
+            ),
+          );
 
-      final url =
-          'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
-      await controller.loadRequest(Uri.parse(url));
-      
-      if (mounted) {
-        setState(() => _controller = controller);
+        final url =
+            'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
+        await controller.loadRequest(Uri.parse(url));
+        
+        if (mounted) {
+          setState(() => _controller = controller);
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('WebView initialization error: $e');
@@ -145,7 +160,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _extractChapters() async {
-    if (_controller == null) return;
+    if (_controller == null && _winController == null) return;
 
     const js = '''
       (function() {
@@ -166,20 +181,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     ''';
 
     try {
-      final result = await _controller!.runJavaScriptReturningResult(js);
-      final chaptersJson = jsonDecode(result.toString());
-      setState(() {
-        _chapters = (chaptersJson as List)
-            .map((ch) => Chapter.fromJson(ch))
-            .toList();
-      });
+      String? result;
+      if (_isWindows && _winController != null) {
+        result = await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        final rawResult = await _controller!.runJavaScriptReturningResult(js);
+        result = rawResult.toString();
+      }
+      
+      if (result != null) {
+        final chaptersJson = jsonDecode(result);
+        setState(() {
+          _chapters = (chaptersJson as List)
+              .map((ch) => Chapter.fromJson(ch))
+              .toList();
+        });
+      }
     } catch (e) {
       debugPrint('Error extracting chapters: $e');
     }
   }
 
   Future<void> _applyFontSize() async {
-    if (_controller == null) return;
+    if (_controller == null && _winController == null) return;
 
     final js = '''
       (function() {
@@ -193,11 +217,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       })();
     ''';
 
-    await _controller!.runJavaScript(js);
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error applying font size: $e');
+    }
   }
 
   Future<void> _restoreReadingPosition() async {
-    if (_controller == null) return;
+    if (_controller == null && _winController == null) return;
 
     final progress = widget.work.readingProgress;
     if (progress.hasProgress) {
@@ -213,7 +245,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
       // Scroll to saved position
       final js = 'window.scrollTo(0, ${progress.scrollPosition});';
-      await _controller!.runJavaScript(js);
+      try {
+        if (_isWindows && _winController != null) {
+          await _winController!.executeScript(js);
+        } else if (_controller != null) {
+          await _controller!.runJavaScript(js);
+        }
+      } catch (e) {
+        debugPrint('Error restoring scroll position: $e');
+      }
     }
 
     // Start tracking scroll position
@@ -221,23 +261,69 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   void _startScrollTracking() {
-    const js = '''
-      (function() {
-        let lastPosition = 0;
-        setInterval(() => {
-          const currentPosition = window.pageYOffset;
-          if (currentPosition !== lastPosition) {
-            lastPosition = currentPosition;
-            ReaderChannel.postMessage(JSON.stringify({
-              type: 'scroll',
-              position: currentPosition,
-              maxScroll: document.documentElement.scrollHeight - window.innerHeight
-            }));
-          }
-        }, 500);
-      })();
-    ''';
-    _controller?.runJavaScript(js);
+    if (_isWindows) {
+      // For Windows, use polling since we can't use JavaScript channels
+      Timer.periodic(const Duration(milliseconds: 500), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        _checkScrollPosition();
+      });
+    } else {
+      // For Android/iOS, use JavaScript channel
+      const js = '''
+        (function() {
+          let lastPosition = 0;
+          setInterval(() => {
+            const currentPosition = window.pageYOffset;
+            if (currentPosition !== lastPosition) {
+              lastPosition = currentPosition;
+              ReaderChannel.postMessage(JSON.stringify({
+                type: 'scroll',
+                position: currentPosition,
+                maxScroll: document.documentElement.scrollHeight - window.innerHeight
+              }));
+            }
+          }, 500);
+        })();
+      ''';
+      _controller?.runJavaScript(js);
+    }
+  }
+
+  Future<void> _checkScrollPosition() async {
+    if (_winController == null) return;
+    
+    try {
+      final js = '''
+        (function() {
+          return JSON.stringify({
+            position: window.pageYOffset,
+            maxScroll: document.documentElement.scrollHeight - window.innerHeight
+          });
+        })();
+      ''';
+      
+      final result = await _winController!.executeScript(js);
+      if (result != null) {
+        final data = jsonDecode(result);
+        final position = (data['position'] ?? 0).toDouble();
+        final maxScroll = (data['maxScroll'] ?? 1).toDouble();
+        
+        setState(() {
+          _currentScrollPosition = position;
+          _hasUnsavedChanges = true;
+        });
+
+        // Check if completed
+        if (maxScroll > 0 && position >= maxScroll * 0.95) {
+          _markAsCompleted();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking scroll position: $e');
+    }
   }
 
   void _handleMessage(String message) {
@@ -337,7 +423,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _jumpToChapter(int index) async {
-    if (_controller == null || index >= _chapters.length) return;
+    if ((_controller == null && _winController == null) || index >= _chapters.length) return;
 
     final chapter = _chapters[index];
     final js = '''
@@ -349,8 +435,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       })();
     ''';
 
-    await _controller!.runJavaScript(js);
-    setState(() => _currentChapterIndex = index);
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+      setState(() => _currentChapterIndex = index);
+    } catch (e) {
+      debugPrint('Error jumping to chapter: $e');
+    }
   }
 
   void _showChapterDrawer() {
@@ -465,7 +559,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            if (_controller != null)
+            if (_isWindows && _winController != null)
+              win.Webview(_winController!)
+            else if (_controller != null)
               WebViewWidget(controller: _controller!),
             if (_isLoading)
               const Center(child: CircularProgressIndicator()),
