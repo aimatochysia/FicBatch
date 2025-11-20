@@ -44,6 +44,7 @@ class WorkRepository {
         chapterAnchor: '',
         lastReadAt: DateTime.now(),
         scrollPosition: 0.0,
+        chapterName: null,
       ),
       isDownloaded: false,
       hasUpdate: false,

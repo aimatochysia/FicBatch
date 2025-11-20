@@ -103,6 +103,224 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
     newCatCtrl.dispose();
   }
 
+  Future<void> _showAddCategoryDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Category'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Category Name',
+            hintText: 'Enter category name',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      final storage = ref.read(storageProvider);
+      await storage.addCategory(result);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added category "$result"')),
+        );
+      }
+    }
+    controller.dispose();
+  }
+
+  Future<void> _showManageCategoriesDialog(BuildContext context) async {
+    final storage = ref.read(storageProvider);
+    final cats = await storage.getCategories();
+
+    if (cats.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No categories to manage')),
+        );
+      }
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Manage Categories'),
+          content: SizedBox(
+            width: 400,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: cats.length,
+              itemBuilder: (context, index) {
+                final cat = cats[index];
+                return ListTile(
+                  title: Text(cat),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () async {
+                          final controller = TextEditingController(text: cat);
+                          final newName = await showDialog<String>(
+                            context: context,
+                            builder: (ctx2) => AlertDialog(
+                              title: const Text('Rename Category'),
+                              content: TextField(
+                                controller: controller,
+                                decoration: const InputDecoration(
+                                  labelText: 'New Name',
+                                ),
+                                autofocus: true,
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx2),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx2, controller.text.trim()),
+                                  child: const Text('Rename'),
+                                ),
+                              ],
+                            ),
+                          );
+                          controller.dispose();
+
+                          if (newName != null && newName.isNotEmpty && newName != cat) {
+                            await storage.renameCategory(cat, newName);
+                            setState(() {
+                              cats[index] = newName;
+                            });
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete),
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx2) => AlertDialog(
+                              title: const Text('Delete Category'),
+                              content: Text('Delete category "$cat"? Works will not be deleted.'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx2, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx2, true),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          );
+
+                          if (confirm == true) {
+                            await storage.deleteCategory(cat);
+                            setState(() {
+                              cats.removeAt(index);
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSortCategoriesDialog(BuildContext context) async {
+    final storage = ref.read(storageProvider);
+    var cats = List<String>.from(await storage.getCategories());
+
+    if (cats.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No categories to sort')),
+        );
+      }
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Sort Categories'),
+          content: SizedBox(
+            width: 400,
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              itemCount: cats.length,
+              onReorder: (oldIndex, newIndex) {
+                setState(() {
+                  if (oldIndex < newIndex) {
+                    newIndex -= 1;
+                  }
+                  final item = cats.removeAt(oldIndex);
+                  cats.insert(newIndex, item);
+                });
+              },
+              itemBuilder: (context, index) {
+                final cat = cats[index];
+                return ListTile(
+                  key: ValueKey(cat),
+                  leading: const Icon(Icons.drag_handle),
+                  title: Text(cat),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                // Save the new order
+                await storage.settingsBox.put('categories_list', cats);
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Categories reordered')),
+                  );
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final worksAsync = ref.watch(workListProvider);
@@ -119,7 +337,56 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Library'),
+                  Row(
+                    children: [
+                      const Text('Library', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert),
+                        onSelected: (value) async {
+                          if (value == 'add') {
+                            await _showAddCategoryDialog(context);
+                          } else if (value == 'manage') {
+                            await _showManageCategoriesDialog(context);
+                          } else if (value == 'sort') {
+                            await _showSortCategoriesDialog(context);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'add',
+                            child: Row(
+                              children: [
+                                Icon(Icons.add),
+                                SizedBox(width: 8),
+                                Text('Add Category'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'manage',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit),
+                                SizedBox(width: 8),
+                                Text('Manage Categories'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'sort',
+                            child: Row(
+                              children: [
+                                Icon(Icons.sort),
+                                SizedBox(width: 8),
+                                Text('Sort Categories'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   TabBar(
                     isScrollable: true,

@@ -41,6 +41,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   bool get _winInited => _winController != null && _winController!.value.isInitialized;
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
+  bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   void _clearQueryInput() {
     if (!mounted) return;
@@ -119,6 +120,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
             }
             await _injectEarlyStyle();
             await _injectThemeStyle();
+            await _applyScrollSpeed();
             await _diagnoseListingDom('pre-inject (Windows)');
             await injectListingButtons(
               isWindows: _isWindows,
@@ -204,6 +206,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                 }
                 _pageReady = true;
                 await _injectThemeStyle();
+                await _applyScrollSpeed();
                 await _diagnoseListingDom('pre-inject (Mobile)');
                 await injectListingButtons(
                   isWindows: _isWindows,
@@ -403,6 +406,63 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
       }
     } catch (e) {
       debugPrint('⚠️ Early style injection failed: $e');
+    }
+  }
+
+  Future<void> _applyScrollSpeed() async {
+    if (!_isDesktop) return;
+    
+    // Load scroll speed from reader settings
+    final storage = ref.read(storageProvider);
+    final prefs = await storage.settingsBox.get('reader_settings');
+    
+    double scrollSpeed = 1.0;
+    if (prefs != null) {
+      try {
+        final prefsMap = prefs is Map<String, dynamic> 
+            ? prefs 
+            : Map<String, dynamic>.from(prefs as Map);
+        scrollSpeed = (prefsMap['scrollSpeed'] ?? 1.0).toDouble();
+      } catch (e) {
+        debugPrint('⚠️ Failed to load scroll speed setting: $e');
+        scrollSpeed = 1.0;
+      }
+    }
+
+    final js = '''
+      (function() {
+        // Remove any existing scroll speed handler
+        if (window.__fbScrollSpeedHandler) {
+          document.removeEventListener('wheel', window.__fbScrollSpeedHandler);
+        }
+        
+        // Create new handler with current speed
+        window.__fbScrollSpeedHandler = function(e) {
+          if (e.ctrlKey || e.metaKey) return; // Don't interfere with zoom
+          
+          e.preventDefault();
+          const speed = $scrollSpeed;
+          const delta = e.deltaY * speed;
+          
+          window.scrollBy({
+            top: delta,
+            behavior: 'auto'
+          });
+        };
+        
+        // Add the handler
+        document.addEventListener('wheel', window.__fbScrollSpeedHandler, { passive: false });
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Scroll speed injection failed: $e');
     }
   }
 

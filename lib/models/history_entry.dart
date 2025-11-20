@@ -21,6 +21,9 @@ class HistoryEntry {
   @HiveField(5)
   final DateTime accessedAt;
 
+  @HiveField(6)
+  final String? chapterName;
+
   HistoryEntry({
     required this.workId,
     required this.title,
@@ -28,6 +31,7 @@ class HistoryEntry {
     required this.chapterIndex,
     required this.scrollPosition,
     required this.accessedAt,
+    this.chapterName,
   });
 
   Map<String, dynamic> toJson() => {
@@ -37,6 +41,7 @@ class HistoryEntry {
         'chapterIndex': chapterIndex,
         'scrollPosition': scrollPosition,
         'accessedAt': accessedAt.toIso8601String(),
+        'chapterName': chapterName,
       };
 
   factory HistoryEntry.fromJson(Map<String, dynamic> json) => HistoryEntry(
@@ -46,5 +51,6 @@ class HistoryEntry {
         chapterIndex: json['chapterIndex'] ?? 0,
         scrollPosition: (json['scrollPosition'] ?? 0.0).toDouble(),
         accessedAt: DateTime.parse(json['accessedAt']),
+        chapterName: json['chapterName'],
       );
 }
