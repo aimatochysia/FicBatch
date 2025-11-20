@@ -104,6 +104,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         if (mounted) {
           setState(() => _isLoading = false);
           await _extractChapters();
+          await _applyThemeStyles();
           await _applyFontSize();
           await _restoreReadingPosition();
         }
@@ -123,6 +124,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   setState(() => _isLoading = false);
                 }
                 await _extractChapters();
+                await _applyThemeStyles();
                 await _applyFontSize();
                 await _restoreReadingPosition();
               },
@@ -199,6 +201,96 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
     } catch (e) {
       debugPrint('Error extracting chapters: $e');
+    }
+  }
+
+  Future<void> _applyThemeStyles() async {
+    if (_controller == null && _winController == null) return;
+
+    // Get the current theme mode
+    final themeMode = ref.read(themeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+
+    final js = '''
+      (function() {
+        const style = document.createElement('style');
+        style.id = 'ficbatch-theme-override';
+        style.textContent = \`
+          ${isDark ? '''
+          /* Dark mode styles */
+          body, #main, #workskin, .work, .chapter {
+            background-color: #121212 !important;
+            color: #e0e0e0 !important;
+          }
+          .landmark, .navigation, .header, #header {
+            background-color: #1e1e1e !important;
+            color: #e0e0e0 !important;
+          }
+          a {
+            color: #bb86fc !important;
+          }
+          a:visited {
+            color: #9965f4 !important;
+          }
+          .meta, .datetime, .module {
+            background-color: #1e1e1e !important;
+            color: #e0e0e0 !important;
+          }
+          .meta dl dt, .meta dl dd {
+            color: #e0e0e0 !important;
+          }
+          blockquote {
+            background-color: #1e1e1e !important;
+            border-left-color: #bb86fc !important;
+            color: #e0e0e0 !important;
+          }
+          ''' : '''
+          /* Light mode styles */
+          body, #main, #workskin, .work, .chapter {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+          }
+          .landmark, .navigation, .header, #header {
+            background-color: #f5f5f5 !important;
+            color: #000000 !important;
+          }
+          a {
+            color: #0000EE !important;
+          }
+          a:visited {
+            color: #551A8B !important;
+          }
+          .meta, .datetime, .module {
+            background-color: #f5f5f5 !important;
+            color: #000000 !important;
+          }
+          .meta dl dt, .meta dl dd {
+            color: #000000 !important;
+          }
+          blockquote {
+            background-color: #f5f5f5 !important;
+            border-left-color: #0000EE !important;
+            color: #000000 !important;
+          }
+          '''}
+        \`;
+        // Remove existing theme style if present
+        const existing = document.getElementById('ficbatch-theme-override');
+        if (existing) {
+          existing.remove();
+        }
+        document.head.appendChild(style);
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error applying theme styles: $e');
     }
   }
 
@@ -363,10 +455,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final chapterAnchor = _currentChapterIndex < _chapters.length
         ? _chapters[_currentChapterIndex].anchor
         : null;
+    final chapterName = _currentChapterIndex < _chapters.length
+        ? _chapters[_currentChapterIndex].title
+        : null;
 
     final updatedProgress = widget.work.readingProgress.copyWith(
       chapterIndex: _currentChapterIndex,
       chapterAnchor: chapterAnchor,
+      chapterName: chapterName,
       lastReadAt: DateTime.now(),
       scrollPosition: _currentScrollPosition,
     );
@@ -379,7 +475,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     await storage.saveWork(updatedWork);
 
     // Add to history
-    await _addToHistory();
+    await _addToHistory(chapterName);
 
     setState(() {
       _hasUnsavedChanges = false;
@@ -387,7 +483,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
-  Future<void> _addToHistory() async {
+  Future<void> _addToHistory(String? chapterName) async {
     final storage = ref.read(storageProvider);
     final historyBox = storage.settingsBox;
     
@@ -399,6 +495,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       title: widget.work.title,
       author: widget.work.author,
       chapterIndex: _currentChapterIndex,
+      chapterName: chapterName,
       scrollPosition: _currentScrollPosition,
       accessedAt: DateTime.now(),
     );
@@ -517,8 +614,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               ListTile(
                 title: const Text('Theme'),
                 trailing: PopupMenuButton<ThemeMode>(
-                  onSelected: (mode) {
-                    ref.read(themeProvider.notifier).setMode(mode);
+                  onSelected: (mode) async {
+                    await ref.read(themeProvider.notifier).setMode(mode);
+                    // Reapply theme styles to webview
+                    await _applyThemeStyles();
                   },
                   itemBuilder: (context) => [
                     const PopupMenuItem(

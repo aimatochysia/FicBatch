@@ -18,16 +18,20 @@ class ReadingProgress {
   @HiveField(4)
   final bool isCompleted;
 
+  @HiveField(5)
+  final String? chapterName;
+
   ReadingProgress({
     required this.chapterIndex,
     this.chapterAnchor,
     this.lastReadAt,
     required this.scrollPosition,
     this.isCompleted = false,
+    this.chapterName,
   });
 
   factory ReadingProgress.empty() =>
-      ReadingProgress(chapterIndex: 0, scrollPosition: 0.0, isCompleted: false);
+      ReadingProgress(chapterIndex: 0, scrollPosition: 0.0, isCompleted: false, chapterName: null);
 
   Map<String, dynamic> toJson() => {
     'chapterIndex': chapterIndex,
@@ -35,6 +39,7 @@ class ReadingProgress {
     'lastReadAt': lastReadAt?.toIso8601String(),
     'scrollPosition': scrollPosition,
     'isCompleted': isCompleted,
+    'chapterName': chapterName,
   };
 
   factory ReadingProgress.fromJson(Map<String, dynamic> json) =>
@@ -46,6 +51,7 @@ class ReadingProgress {
             : null,
         scrollPosition: (json['scrollPosition'] ?? 0.0).toDouble(),
         isCompleted: json['isCompleted'] ?? false,
+        chapterName: json['chapterName'],
       );
 
   ReadingProgress copyWith({
@@ -54,6 +60,7 @@ class ReadingProgress {
     DateTime? lastReadAt,
     double? scrollPosition,
     bool? isCompleted,
+    String? chapterName,
   }) {
     return ReadingProgress(
       chapterIndex: chapterIndex ?? this.chapterIndex,
@@ -61,6 +68,7 @@ class ReadingProgress {
       lastReadAt: lastReadAt ?? this.lastReadAt,
       scrollPosition: scrollPosition ?? this.scrollPosition,
       isCompleted: isCompleted ?? this.isCompleted,
+      chapterName: chapterName ?? this.chapterName,
     );
   }
 
