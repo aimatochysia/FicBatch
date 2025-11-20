@@ -415,14 +415,29 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
     // Load scroll speed from reader settings
     final storage = ref.read(storageProvider);
     final prefs = await storage.settingsBox.get('reader_settings');
-    final scrollSpeed = prefs != null 
-        ? ((prefs as Map<String, dynamic>)['scrollSpeed'] ?? 1.0).toDouble()
-        : 1.0;
+    
+    double scrollSpeed = 1.0;
+    if (prefs != null) {
+      try {
+        final prefsMap = prefs is Map<String, dynamic> 
+            ? prefs 
+            : Map<String, dynamic>.from(prefs as Map);
+        scrollSpeed = (prefsMap['scrollSpeed'] ?? 1.0).toDouble();
+      } catch (e) {
+        debugPrint('⚠️ Failed to load scroll speed setting: $e');
+        scrollSpeed = 1.0;
+      }
+    }
 
     final js = '''
       (function() {
-        // Override wheel event to control scroll speed
-        document.addEventListener('wheel', function(e) {
+        // Remove any existing scroll speed handler
+        if (window.__fbScrollSpeedHandler) {
+          document.removeEventListener('wheel', window.__fbScrollSpeedHandler);
+        }
+        
+        // Create new handler with current speed
+        window.__fbScrollSpeedHandler = function(e) {
           if (e.ctrlKey || e.metaKey) return; // Don't interfere with zoom
           
           e.preventDefault();
@@ -433,7 +448,10 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
             top: delta,
             behavior: 'auto'
           });
-        }, { passive: false });
+        };
+        
+        // Add the handler
+        document.addEventListener('wheel', window.__fbScrollSpeedHandler, { passive: false });
       })();
     ''';
 

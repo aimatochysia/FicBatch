@@ -333,8 +333,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
     final js = '''
       (function() {
-        // Override wheel event to control scroll speed
-        document.addEventListener('wheel', function(e) {
+        // Remove any existing scroll speed handler
+        if (window.__fbScrollSpeedHandler) {
+          document.removeEventListener('wheel', window.__fbScrollSpeedHandler);
+        }
+        
+        // Create new handler with current speed
+        window.__fbScrollSpeedHandler = function(e) {
           if (e.ctrlKey || e.metaKey) return; // Don't interfere with zoom
           
           e.preventDefault();
@@ -345,7 +350,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             top: delta,
             behavior: 'auto'
           });
-        }, { passive: false });
+        };
+        
+        // Add the handler
+        document.addEventListener('wheel', window.__fbScrollSpeedHandler, { passive: false });
       })();
     ''';
 
