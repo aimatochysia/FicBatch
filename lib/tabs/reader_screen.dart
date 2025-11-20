@@ -32,8 +32,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Timer? _autosaveTimer;
   bool _autosaveEnabled = true;
   double _fontSize = 16.0;
+  double _scrollSpeed = 1.0; // 1.0 is default, 0.5 is slower, 2.0 is faster
   DateTime? _lastSaveTime;
   bool _hasUnsavedChanges = false;
+  bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -58,6 +60,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       setState(() {
         _fontSize = (settings['fontSize'] ?? 16.0).toDouble();
         _autosaveEnabled = settings['autosave'] ?? true;
+        _scrollSpeed = (settings['scrollSpeed'] ?? 1.0).toDouble();
       });
     }
   }
@@ -67,6 +70,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     await storage.settingsBox.put('reader_settings', {
       'fontSize': _fontSize,
       'autosave': _autosaveEnabled,
+      'scrollSpeed': _scrollSpeed,
     });
   }
 
@@ -106,6 +110,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           await _extractChapters();
           await _applyThemeStyles();
           await _applyFontSize();
+          if (_isDesktop) await _applyScrollSpeed();
           await _restoreReadingPosition();
         }
       } else {
@@ -126,6 +131,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 await _extractChapters();
                 await _applyThemeStyles();
                 await _applyFontSize();
+                if (_isDesktop) await _applyScrollSpeed();
                 await _restoreReadingPosition();
               },
             ),
@@ -210,78 +216,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // Get the current theme mode
     final themeMode = ref.read(themeProvider);
     final isDark = themeMode == ThemeMode.dark;
+    final mode = isDark ? 'dark' : 'light';
 
-    final js = '''
-      (function() {
-        const style = document.createElement('style');
-        style.id = 'ficbatch-theme-override';
-        style.textContent = \`
-          ${isDark ? '''
-          /* Dark mode styles */
-          body, #main, #workskin, .work, .chapter {
-            background-color: #121212 !important;
-            color: #e0e0e0 !important;
-          }
-          .landmark, .navigation, .header, #header {
-            background-color: #1e1e1e !important;
-            color: #e0e0e0 !important;
-          }
-          a {
-            color: #bb86fc !important;
-          }
-          a:visited {
-            color: #9965f4 !important;
-          }
-          .meta, .datetime, .module {
-            background-color: #1e1e1e !important;
-            color: #e0e0e0 !important;
-          }
-          .meta dl dt, .meta dl dd {
-            color: #e0e0e0 !important;
-          }
-          blockquote {
-            background-color: #1e1e1e !important;
-            border-left-color: #bb86fc !important;
-            color: #e0e0e0 !important;
-          }
-          ''' : '''
-          /* Light mode styles */
-          body, #main, #workskin, .work, .chapter {
-            background-color: #ffffff !important;
-            color: #000000 !important;
-          }
-          .landmark, .navigation, .header, #header {
-            background-color: #f5f5f5 !important;
-            color: #000000 !important;
-          }
-          a {
-            color: #0000EE !important;
-          }
-          a:visited {
-            color: #551A8B !important;
-          }
-          .meta, .datetime, .module {
-            background-color: #f5f5f5 !important;
-            color: #000000 !important;
-          }
-          .meta dl dt, .meta dl dd {
-            color: #000000 !important;
-          }
-          blockquote {
-            background-color: #f5f5f5 !important;
-            border-left-color: #0000EE !important;
-            color: #000000 !important;
-          }
-          '''}
-        \`;
-        // Remove existing theme style if present
-        const existing = document.getElementById('ficbatch-theme-override');
-        if (existing) {
-          existing.remove();
-        }
-        document.head.appendChild(style);
-      })();
-    ''';
+    // Use the same DarkReader approach as browse tab
+    final js = _buildDarkReaderBootstrapJs(mode);
 
     try {
       if (_isWindows && _winController != null) {
@@ -292,6 +230,76 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     } catch (e) {
       debugPrint('Error applying theme styles: $e');
     }
+  }
+
+  String _buildDarkReaderBootstrapJs(String mode) {
+    return '''
+(function () {
+  try {
+    var MODE = '${mode}' === 'dark' ? 'dark' : 'light';
+    var CDN = 'https://cdn.jsdelivr.net/npm/darkreader@4.9.58/darkreader.min.js';
+    var SCRIPT_ID = '__fb_darkreader_script';
+    var pendingMode = MODE;
+
+    function applyMode(mode) {
+      try {
+        if (mode === 'dark') {
+          try { if (window.DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          var theme = { brightness: 100, contrast: 100, sepia: 0 };
+          var fixes = {
+            invert: [],
+            ignoreInlineStyle: [],
+            ignoreImageAnalysis: [],
+            css: ''
+          };
+          DarkReader.enable(theme, fixes);
+          try { document.documentElement.style.colorScheme = 'dark'; } catch(_) {}
+        } else {
+          if (window.DarkReader && DarkReader.isEnabled && DarkReader.isEnabled()) {
+            DarkReader.disable();
+          }
+          try { document.documentElement.style.colorScheme = 'light'; } catch(_) {}
+        }
+      } catch (e) {
+        console.log('[FB-DarkReader] applyMode error', e);
+      }
+    }
+
+    if (!window.__fb_setTheme) {
+      window.__fb_setTheme = function(m) {
+        pendingMode = (m === 'dark') ? 'dark' : 'light';
+        if (window.DarkReader) applyMode(pendingMode);
+      };
+    } else {
+      pendingMode = MODE;
+    }
+
+    if (window.DarkReader) {
+      applyMode(pendingMode);
+    } else {
+      var s = document.getElementById(SCRIPT_ID);
+      if (!s) {
+        s = document.createElement('script');
+        s.id = SCRIPT_ID;
+        s.src = CDN;
+        s.async = true;
+        s.onload = function() {
+          try { if (DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          applyMode(pendingMode);
+        };
+        s.onerror = function(e) { console.log('[FB-DarkReader] script load error', e); };
+        (document.head || document.documentElement).appendChild(s);
+      } else {
+        s.addEventListener('load', function(){ applyMode(pendingMode); }, { once: true });
+      }
+    }
+
+    if (window.__fb_setTheme) window.__fb_setTheme(MODE);
+  } catch (e) {
+    console.log('[FB-DarkReader] bootstrap error', e);
+  }
+})();
+''';
   }
 
   Future<void> _applyFontSize() async {
@@ -317,6 +325,38 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
     } catch (e) {
       debugPrint('Error applying font size: $e');
+    }
+  }
+
+  Future<void> _applyScrollSpeed() async {
+    if (_controller == null && _winController == null) return;
+
+    final js = '''
+      (function() {
+        // Override wheel event to control scroll speed
+        document.addEventListener('wheel', function(e) {
+          if (e.ctrlKey || e.metaKey) return; // Don't interfere with zoom
+          
+          e.preventDefault();
+          const speed = $_scrollSpeed;
+          const delta = e.deltaY * speed;
+          
+          window.scrollBy({
+            top: delta,
+            behavior: 'auto'
+          });
+        }, { passive: false });
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error applying scroll speed: $e');
     }
   }
 
@@ -611,6 +651,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   setDialogState(() => _autosaveEnabled = value);
                 },
               ),
+              if (_isDesktop)
+                ListTile(
+                  title: const Text('Scroll Speed'),
+                  subtitle: Slider(
+                    value: _scrollSpeed,
+                    min: 0.25,
+                    max: 3.0,
+                    divisions: 11,
+                    label: '${_scrollSpeed.toStringAsFixed(2)}x',
+                    onChanged: (value) {
+                      setDialogState(() => _scrollSpeed = value);
+                      _applyScrollSpeed();
+                    },
+                  ),
+                  trailing: Text('${_scrollSpeed.toStringAsFixed(2)}x'),
+                ),
               ListTile(
                 title: const Text('Theme'),
                 trailing: PopupMenuButton<ThemeMode>(
