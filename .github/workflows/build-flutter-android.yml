@@ -1,4 +1,4 @@
-name: Build Flutter Android APK (Unsigned)
+name: Build Unsigned Android APK
 
 on:
   workflow_dispatch:
@@ -6,48 +6,56 @@ on:
       branch:
         description: "Branch to build"
         type: string
-        required: true
         default: "main"
       release_tag:
         description: "Release tag"
         type: string
-        required: true
+        default: "auto"
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout selected branch
+      - name: Checkout branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Set up Flutter
+      - name: Set up Flutter (3.32.0)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.1"
-      
+          flutter-version: "3.32.0"
+
       - name: Flutter doctor
         run: flutter doctor -v
-      
+
+      - name: Remove old lockfile and clean project
+        run: |
+          flutter clean
+          rm -rf build pubspec.lock
+
       - name: Get dependencies
         run: flutter pub get
-      
-      - name: Build unsigned Android APK
-        run: flutter build apk --release
 
+      - name: Build unsigned APK
+        run: flutter build apk --release
 
       - name: Generate automatic release name
         id: relname
         run: |
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          echo "name=Release ${{ github.event.inputs.release_tag }} - $DATE" >> $GITHUB_OUTPUT
+          TAG="${{ github.event.inputs.release_tag }}"
+          if [ "$TAG" = "auto" ]; then
+            TAG="v$(date +'%Y%m%d%H%M')"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "name=Release $TAG - $DATE" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.event.inputs.release_tag }}
+          tag_name: ${{ steps.relname.outputs.tag }}
           name: ${{ steps.relname.outputs.name }}
           files: build/app/outputs/flutter-apk/app-release.apk
         env:
