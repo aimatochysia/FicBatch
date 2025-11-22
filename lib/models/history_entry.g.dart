@@ -23,13 +23,14 @@ class HistoryEntryAdapter extends TypeAdapter<HistoryEntry> {
       chapterIndex: fields[3] as int,
       scrollPosition: fields[4] as double,
       accessedAt: fields[5] as DateTime,
+      chapterName: fields[6] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, HistoryEntry obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.workId)
       ..writeByte(1)
@@ -41,7 +42,9 @@ class HistoryEntryAdapter extends TypeAdapter<HistoryEntry> {
       ..writeByte(4)
       ..write(obj.scrollPosition)
       ..writeByte(5)
-      ..write(obj.accessedAt);
+      ..write(obj.accessedAt)
+      ..writeByte(6)
+      ..write(obj.chapterName);
   }
 
   @override

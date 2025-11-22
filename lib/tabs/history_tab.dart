@@ -36,11 +36,14 @@ class HistoryTab extends ConsumerWidget {
             itemCount: history.length,
             itemBuilder: (context, index) {
               final entry = history[index];
+              final chapterDisplay = entry.chapterName != null && entry.chapterName!.isNotEmpty
+                  ? entry.chapterName!
+                  : 'Chapter ${entry.chapterIndex + 1}';
               return ListTile(
                 title: Text(entry.title),
                 subtitle: Text(
                   '${entry.author}\n'
-                  'Chapter ${entry.chapterIndex + 1} • ${_formatPosition(entry.scrollPosition)}',
+                  '$chapterDisplay',
                 ),
                 isThreeLine: true,
                 trailing: Text(
@@ -71,10 +74,6 @@ class HistoryTab extends ConsumerWidget {
     return historyList
         .map((json) => HistoryEntry.fromJson(Map<String, dynamic>.from(json)))
         .toList();
-  }
-
-  String _formatPosition(double position) {
-    return 'Scroll: ${(position / 100).toStringAsFixed(0)}%';
   }
 
   String _formatDate(DateTime date) {

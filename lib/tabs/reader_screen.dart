@@ -32,8 +32,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Timer? _autosaveTimer;
   bool _autosaveEnabled = true;
   double _fontSize = 16.0;
+  double _scrollSpeed = 1.0; // 1.0 is default, 0.5 is slower, 2.0 is faster
   DateTime? _lastSaveTime;
   bool _hasUnsavedChanges = false;
+  bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -58,6 +60,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       setState(() {
         _fontSize = (settings['fontSize'] ?? 16.0).toDouble();
         _autosaveEnabled = settings['autosave'] ?? true;
+        _scrollSpeed = (settings['scrollSpeed'] ?? 1.0).toDouble();
       });
     }
   }
@@ -67,6 +70,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     await storage.settingsBox.put('reader_settings', {
       'fontSize': _fontSize,
       'autosave': _autosaveEnabled,
+      'scrollSpeed': _scrollSpeed,
     });
   }
 
@@ -104,7 +108,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         if (mounted) {
           setState(() => _isLoading = false);
           await _extractChapters();
+          await _applyThemeStyles();
           await _applyFontSize();
+          if (_isDesktop) await _applyScrollSpeed();
           await _restoreReadingPosition();
         }
       } else {
@@ -123,7 +129,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   setState(() => _isLoading = false);
                 }
                 await _extractChapters();
+                await _applyThemeStyles();
                 await _applyFontSize();
+                if (_isDesktop) await _applyScrollSpeed();
                 await _restoreReadingPosition();
               },
             ),
@@ -202,6 +210,98 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  Future<void> _applyThemeStyles() async {
+    if (_controller == null && _winController == null) return;
+
+    // Get the current theme mode
+    final themeMode = ref.read(themeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final mode = isDark ? 'dark' : 'light';
+
+    // Use the same DarkReader approach as browse tab
+    final js = _buildDarkReaderBootstrapJs(mode);
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error applying theme styles: $e');
+    }
+  }
+
+  String _buildDarkReaderBootstrapJs(String mode) {
+    return '''
+(function () {
+  try {
+    var MODE = '${mode}' === 'dark' ? 'dark' : 'light';
+    var CDN = 'https://cdn.jsdelivr.net/npm/darkreader@4.9.58/darkreader.min.js';
+    var SCRIPT_ID = '__fb_darkreader_script';
+    var pendingMode = MODE;
+
+    function applyMode(mode) {
+      try {
+        if (mode === 'dark') {
+          try { if (window.DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          var theme = { brightness: 100, contrast: 100, sepia: 0 };
+          var fixes = {
+            invert: [],
+            ignoreInlineStyle: [],
+            ignoreImageAnalysis: [],
+            css: ''
+          };
+          DarkReader.enable(theme, fixes);
+          try { document.documentElement.style.colorScheme = 'dark'; } catch(_) {}
+        } else {
+          if (window.DarkReader && DarkReader.isEnabled && DarkReader.isEnabled()) {
+            DarkReader.disable();
+          }
+          try { document.documentElement.style.colorScheme = 'light'; } catch(_) {}
+        }
+      } catch (e) {
+        console.log('[FB-DarkReader] applyMode error', e);
+      }
+    }
+
+    if (!window.__fb_setTheme) {
+      window.__fb_setTheme = function(m) {
+        pendingMode = (m === 'dark') ? 'dark' : 'light';
+        if (window.DarkReader) applyMode(pendingMode);
+      };
+    } else {
+      pendingMode = MODE;
+    }
+
+    if (window.DarkReader) {
+      applyMode(pendingMode);
+    } else {
+      var s = document.getElementById(SCRIPT_ID);
+      if (!s) {
+        s = document.createElement('script');
+        s.id = SCRIPT_ID;
+        s.src = CDN;
+        s.async = true;
+        s.onload = function() {
+          try { if (DarkReader && DarkReader.setFetchMethod) DarkReader.setFetchMethod(window.fetch.bind(window)); } catch(_) {}
+          applyMode(pendingMode);
+        };
+        s.onerror = function(e) { console.log('[FB-DarkReader] script load error', e); };
+        (document.head || document.documentElement).appendChild(s);
+      } else {
+        s.addEventListener('load', function(){ applyMode(pendingMode); }, { once: true });
+      }
+    }
+
+    if (window.__fb_setTheme) window.__fb_setTheme(MODE);
+  } catch (e) {
+    console.log('[FB-DarkReader] bootstrap error', e);
+  }
+})();
+''';
+  }
+
   Future<void> _applyFontSize() async {
     if (_controller == null && _winController == null) return;
 
@@ -225,6 +325,46 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
     } catch (e) {
       debugPrint('Error applying font size: $e');
+    }
+  }
+
+  Future<void> _applyScrollSpeed() async {
+    if (_controller == null && _winController == null) return;
+
+    final js = '''
+      (function() {
+        // Remove any existing scroll speed handler
+        if (window.__fbScrollSpeedHandler) {
+          document.removeEventListener('wheel', window.__fbScrollSpeedHandler);
+        }
+        
+        // Create new handler with current speed
+        window.__fbScrollSpeedHandler = function(e) {
+          if (e.ctrlKey || e.metaKey) return; // Don't interfere with zoom
+          
+          e.preventDefault();
+          const speed = $_scrollSpeed;
+          const delta = e.deltaY * speed;
+          
+          window.scrollBy({
+            top: delta,
+            behavior: 'auto'
+          });
+        };
+        
+        // Add the handler
+        document.addEventListener('wheel', window.__fbScrollSpeedHandler, { passive: false });
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error applying scroll speed: $e');
     }
   }
 
@@ -363,10 +503,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final chapterAnchor = _currentChapterIndex < _chapters.length
         ? _chapters[_currentChapterIndex].anchor
         : null;
+    final chapterName = _currentChapterIndex < _chapters.length
+        ? _chapters[_currentChapterIndex].title
+        : null;
 
     final updatedProgress = widget.work.readingProgress.copyWith(
       chapterIndex: _currentChapterIndex,
       chapterAnchor: chapterAnchor,
+      chapterName: chapterName,
       lastReadAt: DateTime.now(),
       scrollPosition: _currentScrollPosition,
     );
@@ -379,7 +523,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     await storage.saveWork(updatedWork);
 
     // Add to history
-    await _addToHistory();
+    await _addToHistory(chapterName);
 
     setState(() {
       _hasUnsavedChanges = false;
@@ -387,7 +531,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
-  Future<void> _addToHistory() async {
+  Future<void> _addToHistory(String? chapterName) async {
     final storage = ref.read(storageProvider);
     final historyBox = storage.settingsBox;
     
@@ -399,6 +543,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       title: widget.work.title,
       author: widget.work.author,
       chapterIndex: _currentChapterIndex,
+      chapterName: chapterName,
       scrollPosition: _currentScrollPosition,
       accessedAt: DateTime.now(),
     );
@@ -514,11 +659,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   setDialogState(() => _autosaveEnabled = value);
                 },
               ),
+              if (_isDesktop)
+                ListTile(
+                  title: const Text('Scroll Speed'),
+                  subtitle: Slider(
+                    value: _scrollSpeed,
+                    min: 0.25,
+                    max: 3.0,
+                    divisions: 11,
+                    label: '${_scrollSpeed.toStringAsFixed(2)}x',
+                    onChanged: (value) {
+                      setDialogState(() => _scrollSpeed = value);
+                      _applyScrollSpeed();
+                    },
+                  ),
+                  trailing: Text('${_scrollSpeed.toStringAsFixed(2)}x'),
+                ),
               ListTile(
                 title: const Text('Theme'),
                 trailing: PopupMenuButton<ThemeMode>(
-                  onSelected: (mode) {
-                    ref.read(themeProvider.notifier).setMode(mode);
+                  onSelected: (mode) async {
+                    await ref.read(themeProvider.notifier).setMode(mode);
+                    // Reapply theme styles to webview
+                    await _applyThemeStyles();
                   },
                   itemBuilder: (context) => [
                     const PopupMenuItem(

@@ -16,13 +16,14 @@ class ReadingProgressAdapter extends TypeAdapter<ReadingProgress> {
       lastReadAt: fields[2] as DateTime?,
       scrollPosition: fields[3] as double,
       isCompleted: fields[4] as bool,
+      chapterName: fields[5] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ReadingProgress obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(6)
       ..writeByte(0)
       ..write(obj.chapterIndex)
       ..writeByte(1)
@@ -32,7 +33,9 @@ class ReadingProgressAdapter extends TypeAdapter<ReadingProgress> {
       ..writeByte(3)
       ..write(obj.scrollPosition)
       ..writeByte(4)
-      ..write(obj.isCompleted);
+      ..write(obj.isCompleted)
+      ..writeByte(5)
+      ..write(obj.chapterName);
   }
 
   @override
