@@ -39,6 +39,10 @@ jobs:
         run: |
           VERSION=$(grep "^version:" pubspec.yaml | \
             awk '{print $2}' | cut -d'+' -f1)
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from pubspec.yaml"
+            exit 1
+          fi
           TAG_NAME=${GITHUB_REF#refs/tags/}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
