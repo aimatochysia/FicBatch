@@ -1,0 +1,51 @@
+name: Build Flutter Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Select branch to build"
+        required: true
+        default: "main"
+        type: string
+      release_tag:
+        description: "Tag name for release (will be created)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: "3.8.1"
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Generate Release Name
+        id: relname
+        run: |
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          echo "release_name=Release ${{ github.event.inputs.release_tag }} - $DATE" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: ${{ steps.relname.outputs.release_name }}
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
