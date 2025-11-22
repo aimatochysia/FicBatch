@@ -23,19 +23,20 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Set up Flutter (Flutter 3.22.2, Dart 3.8.1)
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.2"
-
+          flutter-version: "3.24.1"
+      
       - name: Flutter doctor
         run: flutter doctor -v
-
+      
       - name: Get dependencies
         run: flutter pub get
-
+      
       - name: Build unsigned Android APK
         run: flutter build apk --release
+
 
       - name: Generate automatic release name
         id: relname
