@@ -1,0 +1,87 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Get version and tag
+        id: version
+        run: |
+          VERSION=$(grep "^version:" pubspec.yaml | \
+            awk '{print $2}' | cut -d'+' -f1)
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION for tag: $TAG_NAME"
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/flutter-apk/FicBatch-v${VERSION}.apk
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: FicBatch ${{ steps.version.outputs.tag }}
+          body: |
+            ## FicBatch Android APK Release
+
+            ### Version: ${{ steps.version.outputs.version }}
+
+            **Download the APK below to install
+            on your Android device.**
+
+            ### Installation Instructions:
+            1. Download the
+            `FicBatch-v${{ steps.version.outputs.version }}.apk` file
+            2. Enable "Install from Unknown Sources"
+            in your Android settings
+            3. Open the downloaded APK file to install
+            4. You may need to allow installation from your browser
+            or file manager
+
+            ### Changes:
+            See the commit history for details of changes
+            in this release.
+
+            ---
+            *Note: This is an unsigned APK. You may see a warning
+            during installation, which is normal for unsigned apps.*
+          files: |
+            build/app/outputs/flutter-apk/FicBatch-v${{ steps.version.outputs.version }}.apk
+            build/app/outputs/flutter-apk/app-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
