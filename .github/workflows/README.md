@@ -72,7 +72,7 @@ When downloading APKs from releases:
 
 The workflows use:
 - Java 17 (Temurin distribution)
-- Flutter 3.24.0 (stable channel)
+- Flutter latest stable channel (auto-updated to match SDK requirements)
 - Ubuntu latest runner
 
 ## Version Management
