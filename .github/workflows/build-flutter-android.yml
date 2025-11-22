@@ -1,20 +1,20 @@
-name: Build Flutter Android APK
+name: Build Flutter Android APK (Unsigned)
 
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Select branch to build"
+        description: "Branch to build"
+        type: string
         required: true
         default: "main"
-        type: string
       release_tag:
-        description: "Tag name for release (will be created)"
-        required: true
+        description: "Release tag"
         type: string
+        required: true
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,29 +23,32 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Setup Flutter
+      - name: Set up Flutter (Flutter 3.22.2, Dart 3.8.1)
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: "3.22.2"
           channel: "stable"
-          flutter-version: "3.8.1"
+
+      - name: Flutter doctor
+        run: flutter doctor -v
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build unsigned Android APK
         run: flutter build apk --release
 
-      - name: Generate Release Name
+      - name: Generate automatic release name
         id: relname
         run: |
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          echo "release_name=Release ${{ github.event.inputs.release_tag }} - $DATE" >> $GITHUB_OUTPUT
+          echo "name=Release ${{ github.event.inputs.release_tag }} - $DATE" >> $GITHUB_OUTPUT
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ steps.relname.outputs.release_name }}
+          name: ${{ steps.relname.outputs.name }}
           files: build/app/outputs/flutter-apk/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
