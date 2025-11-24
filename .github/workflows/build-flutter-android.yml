@@ -3,10 +3,6 @@ name: Build Unsigned Android APK
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to build"
-        type: string
-        default: "main"
       release_tag:
         description: "Release tag"
         type: string
@@ -22,7 +18,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Set up Flutter (3.32.0)
+      - name: Set up Flutter (3.38.3)
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.38.3"
@@ -34,6 +30,9 @@ jobs:
         run: |
           flutter clean
           rm -rf build pubspec.lock
+          
+      - name: Force analyzer downgrade (workaround)
+        run: flutter pub add dev:analyzer:^6.4.1
 
       - name: Get dependencies
         run: flutter pub get
