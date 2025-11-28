@@ -108,12 +108,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         // Wait a bit for page to load then apply DOM manipulations
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
-          await _cleanupDOM();
+          // Extract chapters FIRST (before removing hrefs)
           await _extractChapters();
+          // Then cleanup DOM (removes hrefs, header elements, footer)
+          await _cleanupDOM();
           await _applyThemeStyles();
           await _applyFontSize();
           if (_isDesktop) await _applyScrollSpeed();
-          await _blockExternalNavigation(workUrl);
           await _restoreReadingPosition();
           setState(() {
             _isLoading = false;
@@ -141,12 +142,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 return NavigationDecision.prevent;
               },
               onPageFinished: (url) async {
-                await _cleanupDOM();
+                // Extract chapters FIRST (before removing hrefs)
                 await _extractChapters();
+                // Then cleanup DOM (removes hrefs, header elements, footer)
+                await _cleanupDOM();
                 await _applyThemeStyles();
                 await _applyFontSize();
                 if (_isDesktop) await _applyScrollSpeed();
-                await _blockExternalNavigation(workUrl);
                 await _restoreReadingPosition();
                 if (mounted) {
                   setState(() {
@@ -227,42 +229,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
     } catch (e) {
       debugPrint('Error cleaning up DOM: $e');
-    }
-  }
-
-  /// Block external navigation by intercepting link clicks
-  Future<void> _blockExternalNavigation(String workUrl) async {
-    if (_controller == null && _winController == null) return;
-
-    final js = '''
-      (function() {
-        const workUrl = '$workUrl';
-        
-        // Intercept all click events on links
-        document.addEventListener('click', function(e) {
-          const target = e.target.closest('a');
-          if (target && target.hasAttribute('href')) {
-            const href = target.getAttribute('href');
-            // Allow anchor links (same page navigation)
-            if (href && href.startsWith('#')) {
-              return; // Allow anchor navigation
-            }
-            // Block all other navigation
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }, true);
-      })();
-    ''';
-
-    try {
-      if (_isWindows && _winController != null) {
-        await _winController!.executeScript(js);
-      } else if (_controller != null) {
-        await _controller!.runJavaScript(js);
-      }
-    } catch (e) {
-      debugPrint('Error blocking external navigation: $e');
     }
   }
 
