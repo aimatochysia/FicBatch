@@ -26,6 +26,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   win.WebviewController? _winController;
   bool _isWindows = Platform.isWindows;
   bool _isLoading = true;
+  bool _isContentReady = false; // Wait until all DOM manipulations are done
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
   int _currentChapterIndex = 0;
@@ -83,6 +84,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _initWebView() async {
+    final workUrl = 'https://archiveofourown.org/works/${widget.work.id}';
+    final baseUrl = '$workUrl?view_full_work=true&view_adult=true';
+    
     try {
       if (_isWindows) {
         // Windows webview
@@ -99,19 +103,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           }
         });
         
-        await _winController!.loadUrl(
-          'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
-        );
+        await _winController!.loadUrl(baseUrl);
         
-        // Wait a bit for page to load then extract chapters
+        // Wait a bit for page to load then apply DOM manipulations
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
-          setState(() => _isLoading = false);
+          await _cleanupDOM();
           await _extractChapters();
           await _applyThemeStyles();
           await _applyFontSize();
           if (_isDesktop) await _applyScrollSpeed();
+          await _blockExternalNavigation(workUrl);
           await _restoreReadingPosition();
+          setState(() {
+            _isLoading = false;
+            _isContentReady = true;
+          });
         }
       } else {
         // Android/iOS webview
@@ -124,22 +131,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           })
           ..setNavigationDelegate(
             NavigationDelegate(
-              onPageFinished: (url) async {
-                if (mounted) {
-                  setState(() => _isLoading = false);
+              onNavigationRequest: (request) {
+                final url = request.url;
+                // Allow initial page load and same-work navigation
+                if (url.startsWith(workUrl) || url.contains('#')) {
+                  return NavigationDecision.navigate;
                 }
+                // Block external navigation
+                return NavigationDecision.prevent;
+              },
+              onPageFinished: (url) async {
+                await _cleanupDOM();
                 await _extractChapters();
                 await _applyThemeStyles();
                 await _applyFontSize();
                 if (_isDesktop) await _applyScrollSpeed();
+                await _blockExternalNavigation(workUrl);
                 await _restoreReadingPosition();
+                if (mounted) {
+                  setState(() {
+                    _isLoading = false;
+                    _isContentReady = true;
+                  });
+                }
               },
             ),
           );
 
-        final url =
-            'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
-        await controller.loadRequest(Uri.parse(url));
+        await controller.loadRequest(Uri.parse(baseUrl));
         
         if (mounted) {
           setState(() => _controller = controller);
@@ -150,7 +169,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       debugPrint('Stack trace: $stackTrace');
       
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isContentReady = true;
+        });
         
         // Schedule the snackbar to show after the frame is built
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,6 +189,83 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Cleanup DOM by removing unnecessary elements from the page
+  Future<void> _cleanupDOM() async {
+    if (_controller == null && _winController == null) return;
+
+    const js = '''
+      (function() {
+        // Remove div and nav elements inside header
+        const header = document.querySelector('header');
+        if (header) {
+          const divsInHeader = header.querySelectorAll('div');
+          const navsInHeader = header.querySelectorAll('nav');
+          divsInHeader.forEach(el => el.remove());
+          navsInHeader.forEach(el => el.remove());
+        }
+        
+        // Remove footer element
+        const footer = document.getElementById('footer');
+        if (footer) {
+          footer.remove();
+        }
+        
+        // Disable all hrefs by preventing default navigation
+        const allLinks = document.querySelectorAll('a[href]');
+        allLinks.forEach(link => {
+          link.removeAttribute('href');
+          link.style.cursor = 'default';
+        });
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error cleaning up DOM: $e');
+    }
+  }
+
+  /// Block external navigation by intercepting link clicks
+  Future<void> _blockExternalNavigation(String workUrl) async {
+    if (_controller == null && _winController == null) return;
+
+    final js = '''
+      (function() {
+        const workUrl = '$workUrl';
+        
+        // Intercept all click events on links
+        document.addEventListener('click', function(e) {
+          const target = e.target.closest('a');
+          if (target && target.hasAttribute('href')) {
+            const href = target.getAttribute('href');
+            // Allow anchor links (same page navigation)
+            if (href && href.startsWith('#')) {
+              return; // Allow anchor navigation
+            }
+            // Block all other navigation
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }, true);
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error blocking external navigation: $e');
+    }
+  }
+
   Future<void> _extractChapters() async {
     if (_controller == null && _winController == null) return;
 
@@ -176,12 +275,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         const chapterHeadings = document.querySelectorAll('h3.title');
         chapterHeadings.forEach((heading, index) => {
           const link = heading.querySelector('a');
-          if (link) {
-            chapters.push({
-              index: index,
-              title: link.textContent.trim(),
-              anchor: heading.id || `chapter-\${index}`
-            });
+          // Only include chapters that have a valid link with href pointing to chapters
+          // Skip entries without valid chapter links
+          if (link && link.href && link.href.includes('/chapters/')) {
+            // Get full title: combine link text with any sibling text
+            // Example: <a>Chapter 1</a>: It's Not Always Sunny in Quantico
+            // We want: "Chapter 1: It's Not Always Sunny in Quantico"
+            const fullTitle = heading.textContent.trim().replace(/\\s+/g, ' ');
+            const anchor = heading.id || '';
+            
+            // Only add if we have a valid anchor (id attribute)
+            if (anchor) {
+              chapters.push({
+                index: chapters.length, // Use actual chapter count, not loop index
+                title: fullTitle,
+                anchor: anchor
+              });
+            }
           }
         });
         return JSON.stringify(chapters);
@@ -722,11 +832,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            if (_isWindows && _winController != null)
-              win.Webview(_winController!)
-            else if (_controller != null)
-              WebViewWidget(controller: _controller!),
-            if (_isLoading)
+            // Show webview only when content is ready (all DOM manipulations done)
+            if (_isContentReady)
+              if (_isWindows && _winController != null)
+                win.Webview(_winController!)
+              else if (_controller != null)
+                WebViewWidget(controller: _controller!),
+            // Show loading indicator until content is ready
+            if (!_isContentReady)
               const Center(child: CircularProgressIndicator()),
             // Back button
             Positioned(
@@ -738,16 +851,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 child: const Icon(Icons.arrow_back),
               ),
             ),
-            // Chapter drawer button
-            Positioned(
-              top: 64,
-              left: 8,
-              child: FloatingActionButton.small(
-                heroTag: 'chapters',
-                onPressed: _showChapterDrawer,
-                child: const Icon(Icons.menu),
+            // Chapter drawer button (only show if there are chapters)
+            if (_chapters.isNotEmpty)
+              Positioned(
+                top: 64,
+                left: 8,
+                child: FloatingActionButton.small(
+                  heroTag: 'chapters',
+                  onPressed: _showChapterDrawer,
+                  child: const Icon(Icons.menu),
+                ),
               ),
-            ),
             // Settings button
             Positioned(
               top: 8,
