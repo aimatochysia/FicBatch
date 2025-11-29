@@ -26,6 +26,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   win.WebviewController? _winController;
   bool _isWindows = Platform.isWindows;
   bool _isLoading = true;
+  bool _isContentReady = false; // Track if content is ready to display
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
   int _currentChapterIndex = 0;
@@ -82,6 +83,39 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
+  /// Check if a URL is for another AO3 work
+  bool _isAnotherWork(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    
+    // Check if it's an AO3 work URL that's NOT the current work
+    final workMatch = RegExp(r'/works/(\d+)').firstMatch(url);
+    if (workMatch != null) {
+      final urlWorkId = workMatch.group(1);
+      return urlWorkId != widget.work.id;
+    }
+    return false;
+  }
+
+  /// Check if a URL is allowed for navigation within the current work
+  bool _isAllowedNavigation(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    
+    // Allow same-page anchor navigation
+    if (url.startsWith('#')) return true;
+    
+    // Allow navigation within the current work (including chapters, comments, etc.)
+    final workId = widget.work.id;
+    final workPattern = RegExp('^https://archiveofourown\\.org/works/$workId(/|\$|\\?)');
+    if (workPattern.hasMatch(url)) return true;
+    
+    // Allow about:blank and similar
+    if (uri.scheme == 'about' || uri.scheme == 'javascript') return true;
+    
+    return false;
+  }
+
   Future<void> _initWebView() async {
     try {
       if (_isWindows) {
@@ -103,15 +137,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
         );
         
-        // Wait a bit for page to load then extract chapters
+        // Wait a bit for page to load then apply all modifications
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
-          setState(() => _isLoading = false);
+          await _removeUnwantedElements();
           await _extractChapters();
           await _applyThemeStyles();
           await _applyFontSize();
           if (_isDesktop) await _applyScrollSpeed();
           await _restoreReadingPosition();
+          // Now content is ready to display
+          setState(() {
+            _isLoading = false;
+            _isContentReady = true;
+          });
         }
       } else {
         // Android/iOS webview
@@ -124,15 +163,40 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           })
           ..setNavigationDelegate(
             NavigationDelegate(
+              onNavigationRequest: (request) {
+                final url = request.url;
+                
+                // If navigating to another work or non-work AO3 URL, 
+                // close reader and pass URL back to browse tab
+                if (_isAnotherWork(url) || 
+                    (!_isAllowedNavigation(url) && url.contains('archiveofourown.org'))) {
+                  Navigator.pop(context, url);
+                  return NavigationDecision.prevent;
+                }
+                
+                // Allow navigation within current work
+                if (_isAllowedNavigation(url)) {
+                  return NavigationDecision.navigate;
+                }
+                
+                // Block external (non-AO3) URLs
+                debugPrint('Blocked navigation to external URL: $url');
+                return NavigationDecision.prevent;
+              },
               onPageFinished: (url) async {
                 if (mounted) {
-                  setState(() => _isLoading = false);
+                  await _removeUnwantedElements();
+                  await _extractChapters();
+                  await _applyThemeStyles();
+                  await _applyFontSize();
+                  if (_isDesktop) await _applyScrollSpeed();
+                  await _restoreReadingPosition();
+                  // Now content is ready to display
+                  setState(() {
+                    _isLoading = false;
+                    _isContentReady = true;
+                  });
                 }
-                await _extractChapters();
-                await _applyThemeStyles();
-                await _applyFontSize();
-                if (_isDesktop) await _applyScrollSpeed();
-                await _restoreReadingPosition();
               },
             ),
           );
@@ -150,7 +214,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       debugPrint('Stack trace: $stackTrace');
       
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isContentReady = true;
+        });
         
         // Schedule the snackbar to show after the frame is built
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,6 +234,40 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Remove unwanted elements from the page (div & nav inside header, footer div)
+  Future<void> _removeUnwantedElements() async {
+    if (_controller == null && _winController == null) return;
+
+    const js = '''
+      (function() {
+        // Remove div and nav elements inside header
+        const header = document.querySelector('header');
+        if (header) {
+          const divsInHeader = header.querySelectorAll('div');
+          divsInHeader.forEach(div => div.remove());
+          const navsInHeader = header.querySelectorAll('nav');
+          navsInHeader.forEach(nav => nav.remove());
+        }
+        
+        // Remove footer div
+        const footer = document.getElementById('footer');
+        if (footer) {
+          footer.remove();
+        }
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error removing unwanted elements: $e');
+    }
+  }
+
   Future<void> _extractChapters() async {
     if (_controller == null && _winController == null) return;
 
@@ -174,14 +275,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       (function() {
         const chapters = [];
         const chapterHeadings = document.querySelectorAll('h3.title');
-        chapterHeadings.forEach((heading, index) => {
+        let chapterIndex = 0;
+        
+        chapterHeadings.forEach((heading) => {
           const link = heading.querySelector('a');
-          if (link) {
+          // Only include if the link points to a chapter (contains /chapters/)
+          if (link && link.href && link.href.includes('/chapters/')) {
+            // Get the full text content of the h3, which includes text after the link
+            // e.g., "Chapter 1: It's Not Always Sunny in Quantico"
+            const fullTitle = heading.textContent.trim().replace(/\\s+/g, ' ');
+            
+            // AO3 uses 1-indexed chapter IDs (chapter-1, chapter-2, etc.)
+            // Use heading.id if available, otherwise use 1-indexed fallback
+            const chapterNum = chapterIndex + 1;
+            
             chapters.push({
-              index: index,
-              title: link.textContent.trim(),
-              anchor: heading.id || `chapter-\${index}`
+              index: chapterIndex,
+              title: fullTitle,
+              anchor: heading.id || ('chapter-' + chapterNum)
             });
+            chapterIndex++;
           }
         });
         return JSON.stringify(chapters);
@@ -722,11 +835,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            if (_isWindows && _winController != null)
-              win.Webview(_winController!)
-            else if (_controller != null)
-              WebViewWidget(controller: _controller!),
-            if (_isLoading)
+            // Only show webview when content is ready (after theme & element removal)
+            if (_isContentReady)
+              if (_isWindows && _winController != null)
+                win.Webview(_winController!)
+              else if (_controller != null)
+                WebViewWidget(controller: _controller!),
+            // Show loading indicator while preparing content
+            if (!_isContentReady || _isLoading)
               const Center(child: CircularProgressIndicator()),
             // Back button
             Positioned(
@@ -738,16 +854,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 child: const Icon(Icons.arrow_back),
               ),
             ),
-            // Chapter drawer button
-            Positioned(
-              top: 64,
-              left: 8,
-              child: FloatingActionButton.small(
-                heroTag: 'chapters',
-                onPressed: _showChapterDrawer,
-                child: const Icon(Icons.menu),
+            // Chapter drawer button (only show if there are chapters)
+            if (_chapters.isNotEmpty)
+              Positioned(
+                top: 64,
+                left: 8,
+                child: FloatingActionButton.small(
+                  heroTag: 'chapters',
+                  onPressed: _showChapterDrawer,
+                  child: const Icon(Icons.menu),
+                ),
               ),
-            ),
             // Settings button
             Positioned(
               top: 8,
