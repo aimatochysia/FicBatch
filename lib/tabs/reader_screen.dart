@@ -26,6 +26,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   win.WebviewController? _winController;
   bool _isWindows = Platform.isWindows;
   bool _isLoading = true;
+  bool _isContentReady = false; // Track if content is ready to display
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
   int _currentChapterIndex = 0;
@@ -82,6 +83,25 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
+  /// Check if a URL is allowed for navigation within the current work
+  bool _isAllowedNavigation(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    
+    // Allow same-page anchor navigation
+    if (url.startsWith('#')) return true;
+    
+    // Allow navigation within the current work (including chapters, comments, etc.)
+    final workId = widget.work.id;
+    final workPattern = RegExp('^https://archiveofourown\\.org/works/$workId(/|\$|\\?)');
+    if (workPattern.hasMatch(url)) return true;
+    
+    // Allow about:blank and similar
+    if (uri.scheme == 'about' || uri.scheme == 'javascript') return true;
+    
+    return false;
+  }
+
   Future<void> _initWebView() async {
     try {
       if (_isWindows) {
@@ -103,15 +123,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
         );
         
-        // Wait a bit for page to load then extract chapters
+        // Wait a bit for page to load then apply all modifications
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
-          setState(() => _isLoading = false);
+          await _blockExternalNavigation();
+          await _removeUnwantedElements();
           await _extractChapters();
           await _applyThemeStyles();
           await _applyFontSize();
           if (_isDesktop) await _applyScrollSpeed();
           await _restoreReadingPosition();
+          // Now content is ready to display
+          setState(() {
+            _isLoading = false;
+            _isContentReady = true;
+          });
         }
       } else {
         // Android/iOS webview
@@ -124,15 +150,28 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           })
           ..setNavigationDelegate(
             NavigationDelegate(
+              onNavigationRequest: (request) {
+                // Block navigation to URLs outside the current work
+                if (_isAllowedNavigation(request.url)) {
+                  return NavigationDecision.navigate;
+                }
+                debugPrint('Blocked navigation to: ${request.url}');
+                return NavigationDecision.prevent;
+              },
               onPageFinished: (url) async {
                 if (mounted) {
-                  setState(() => _isLoading = false);
+                  await _removeUnwantedElements();
+                  await _extractChapters();
+                  await _applyThemeStyles();
+                  await _applyFontSize();
+                  if (_isDesktop) await _applyScrollSpeed();
+                  await _restoreReadingPosition();
+                  // Now content is ready to display
+                  setState(() {
+                    _isLoading = false;
+                    _isContentReady = true;
+                  });
                 }
-                await _extractChapters();
-                await _applyThemeStyles();
-                await _applyFontSize();
-                if (_isDesktop) await _applyScrollSpeed();
-                await _restoreReadingPosition();
               },
             ),
           );
@@ -150,7 +189,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       debugPrint('Stack trace: $stackTrace');
       
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isContentReady = true;
+        });
         
         // Schedule the snackbar to show after the frame is built
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,6 +209,89 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Remove unwanted elements from the page (div & nav inside header, footer div)
+  Future<void> _removeUnwantedElements() async {
+    if (_controller == null && _winController == null) return;
+
+    const js = '''
+      (function() {
+        // Remove div and nav elements inside header
+        const header = document.querySelector('header');
+        if (header) {
+          const divsInHeader = header.querySelectorAll('div');
+          divsInHeader.forEach(div => div.remove());
+          const navsInHeader = header.querySelectorAll('nav');
+          navsInHeader.forEach(nav => nav.remove());
+        }
+        
+        // Remove footer div
+        const footer = document.getElementById('footer');
+        if (footer) {
+          footer.remove();
+        }
+      })();
+    ''';
+
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Error removing unwanted elements: $e');
+    }
+  }
+
+  /// Block external navigation for Windows webview via JavaScript
+  Future<void> _blockExternalNavigation() async {
+    if (_winController == null) return;
+
+    final workId = widget.work.id;
+    final js = '''
+      (function() {
+        // Intercept all link clicks and form submissions
+        document.addEventListener('click', function(e) {
+          const link = e.target.closest('a');
+          if (link && link.href) {
+            const href = link.href;
+            const workPattern = /^https:\\/\\/archiveofourown\\.org\\/works\\/${workId}(\\/|\$|\\?)/;
+            const isAnchor = href.startsWith('#') || link.getAttribute('href')?.startsWith('#');
+            
+            if (!isAnchor && !workPattern.test(href)) {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log('Blocked navigation to:', href);
+              return false;
+            }
+          }
+        }, true);
+        
+        // Block form submissions to external URLs
+        document.addEventListener('submit', function(e) {
+          const form = e.target;
+          if (form && form.action) {
+            const action = form.action;
+            const workPattern = /^https:\\/\\/archiveofourown\\.org\\/works\\/${workId}(\\/|\$|\\?)/;
+            
+            if (!workPattern.test(action)) {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log('Blocked form submission to:', action);
+              return false;
+            }
+          }
+        }, true);
+      })();
+    ''';
+
+    try {
+      await _winController!.executeScript(js);
+    } catch (e) {
+      debugPrint('Error blocking external navigation: $e');
+    }
+  }
+
   Future<void> _extractChapters() async {
     if (_controller == null && _winController == null) return;
 
@@ -174,14 +299,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       (function() {
         const chapters = [];
         const chapterHeadings = document.querySelectorAll('h3.title');
-        chapterHeadings.forEach((heading, index) => {
+        let chapterIndex = 0;
+        
+        chapterHeadings.forEach((heading) => {
           const link = heading.querySelector('a');
-          if (link) {
+          // Only include if the link points to a chapter (contains /chapters/)
+          if (link && link.href && link.href.includes('/chapters/')) {
+            // Get the full text content of the h3, which includes text after the link
+            // e.g., "Chapter 1: It's Not Always Sunny in Quantico"
+            const fullTitle = heading.textContent.trim().replace(/\\s+/g, ' ');
+            
             chapters.push({
-              index: index,
-              title: link.textContent.trim(),
-              anchor: heading.id || `chapter-\${index}`
+              index: chapterIndex,
+              title: fullTitle,
+              anchor: heading.id || ('chapter-' + chapterIndex)
             });
+            chapterIndex++;
           }
         });
         return JSON.stringify(chapters);
@@ -722,11 +855,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            if (_isWindows && _winController != null)
-              win.Webview(_winController!)
-            else if (_controller != null)
-              WebViewWidget(controller: _controller!),
-            if (_isLoading)
+            // Only show webview when content is ready (after theme & element removal)
+            if (_isContentReady)
+              if (_isWindows && _winController != null)
+                win.Webview(_winController!)
+              else if (_controller != null)
+                WebViewWidget(controller: _controller!),
+            // Show loading indicator while preparing content
+            if (!_isContentReady || _isLoading)
               const Center(child: CircularProgressIndicator()),
             // Back button
             Positioned(
@@ -738,16 +874,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 child: const Icon(Icons.arrow_back),
               ),
             ),
-            // Chapter drawer button
-            Positioned(
-              top: 64,
-              left: 8,
-              child: FloatingActionButton.small(
-                heroTag: 'chapters',
-                onPressed: _showChapterDrawer,
-                child: const Icon(Icons.menu),
+            // Chapter drawer button (only show if there are chapters)
+            if (_chapters.isNotEmpty)
+              Positioned(
+                top: 64,
+                left: 8,
+                child: FloatingActionButton.small(
+                  heroTag: 'chapters',
+                  onPressed: _showChapterDrawer,
+                  child: const Icon(Icons.menu),
+                ),
               ),
-            ),
             // Settings button
             Positioned(
               top: 8,
