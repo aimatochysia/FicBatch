@@ -174,8 +174,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   final storage = ref.read(storageProvider);
                   
                   // Check if work is in library, otherwise create a temporary Work
-                  var work = storage.getWork(workId);
-                  work ??= Work(
+                  final Work workToOpen = storage.getWork(workId) ?? Work(
                     id: workId,
                     title: 'Loading...',
                     author: 'Loading...',
@@ -188,7 +187,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   final returnUrl = await Navigator.push<String>(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => ReaderScreen(work: work),
+                      builder: (context) => ReaderScreen(work: workToOpen),
                     ),
                   );
                   
