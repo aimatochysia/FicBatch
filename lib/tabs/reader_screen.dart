@@ -309,10 +309,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             // e.g., "Chapter 1: It's Not Always Sunny in Quantico"
             const fullTitle = heading.textContent.trim().replace(/\\s+/g, ' ');
             
+            // AO3 uses 1-indexed chapter IDs (chapter-1, chapter-2, etc.)
+            // Use heading.id if available, otherwise use 1-indexed fallback
+            const chapterNum = chapterIndex + 1;
+            
             chapters.push({
               index: chapterIndex,
               title: fullTitle,
-              anchor: heading.id || ('chapter-' + chapterIndex)
+              anchor: heading.id || ('chapter-' + chapterNum)
             });
             chapterIndex++;
           }
