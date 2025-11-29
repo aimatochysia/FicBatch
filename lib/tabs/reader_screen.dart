@@ -83,6 +83,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
+  /// Check if a URL is for another AO3 work
+  bool _isAnotherWork(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    
+    // Check if it's an AO3 work URL that's NOT the current work
+    final workMatch = RegExp(r'/works/(\d+)').firstMatch(url);
+    if (workMatch != null) {
+      final urlWorkId = workMatch.group(1);
+      return urlWorkId != widget.work.id;
+    }
+    return false;
+  }
+
   /// Check if a URL is allowed for navigation within the current work
   bool _isAllowedNavigation(String url) {
     final uri = Uri.tryParse(url);
@@ -126,7 +140,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         // Wait a bit for page to load then apply all modifications
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
-          await _blockExternalNavigation();
           await _removeUnwantedElements();
           await _extractChapters();
           await _applyThemeStyles();
@@ -151,11 +164,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           ..setNavigationDelegate(
             NavigationDelegate(
               onNavigationRequest: (request) {
-                // Block navigation to URLs outside the current work
-                if (_isAllowedNavigation(request.url)) {
+                final url = request.url;
+                
+                // If navigating to another work or non-work AO3 URL, 
+                // close reader and pass URL back to browse tab
+                if (_isAnotherWork(url) || 
+                    (!_isAllowedNavigation(url) && url.contains('archiveofourown.org'))) {
+                  Navigator.pop(context, url);
+                  return NavigationDecision.prevent;
+                }
+                
+                // Allow navigation within current work
+                if (_isAllowedNavigation(url)) {
                   return NavigationDecision.navigate;
                 }
-                debugPrint('Blocked navigation to: ${request.url}');
+                
+                // Block external (non-AO3) URLs
+                debugPrint('Blocked navigation to external URL: $url');
                 return NavigationDecision.prevent;
               },
               onPageFinished: (url) async {
@@ -240,55 +265,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       }
     } catch (e) {
       debugPrint('Error removing unwanted elements: $e');
-    }
-  }
-
-  /// Block external navigation for Windows webview via JavaScript
-  Future<void> _blockExternalNavigation() async {
-    if (_winController == null) return;
-
-    final workId = widget.work.id;
-    final js = '''
-      (function() {
-        // Intercept all link clicks and form submissions
-        document.addEventListener('click', function(e) {
-          const link = e.target.closest('a');
-          if (link && link.href) {
-            const href = link.href;
-            const workPattern = /^https:\\/\\/archiveofourown\\.org\\/works\\/${workId}(\\/|\$|\\?)/;
-            const isAnchor = href.startsWith('#') || link.getAttribute('href')?.startsWith('#');
-            
-            if (!isAnchor && !workPattern.test(href)) {
-              e.preventDefault();
-              e.stopPropagation();
-              console.log('Blocked navigation to:', href);
-              return false;
-            }
-          }
-        }, true);
-        
-        // Block form submissions to external URLs
-        document.addEventListener('submit', function(e) {
-          const form = e.target;
-          if (form && form.action) {
-            const action = form.action;
-            const workPattern = /^https:\\/\\/archiveofourown\\.org\\/works\\/${workId}(\\/|\$|\\?)/;
-            
-            if (!workPattern.test(action)) {
-              e.preventDefault();
-              e.stopPropagation();
-              console.log('Blocked form submission to:', action);
-              return false;
-            }
-          }
-        }, true);
-      })();
-    ''';
-
-    try {
-      await _winController!.executeScript(js);
-    } catch (e) {
-      debugPrint('Error blocking external navigation: $e');
     }
   }
 

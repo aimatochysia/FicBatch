@@ -168,22 +168,39 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
               onNavigationRequest: (request) async {
                 // Intercept work page navigation to open reader
                 final url = request.url;
-                final workIdMatch = RegExp(r'/works/(\d+)(?:/chapters/\d+)?$').firstMatch(url);
+                final workIdMatch = RegExp(r'/works/(\d+)(?:/chapters/\d+)?(?:[/?#]|$)').firstMatch(url);
                 if (workIdMatch != null && !url.contains('view_full_work')) {
                   final workId = workIdMatch.group(1)!;
                   final storage = ref.read(storageProvider);
-                  final work = storage.getWork(workId);
                   
-                  if (work != null) {
-                    // Work is in library, open reader
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ReaderScreen(work: work),
-                      ),
-                    );
-                    return NavigationDecision.prevent;
+                  // Check if work is in library, otherwise create a temporary Work
+                  var work = storage.getWork(workId);
+                  work ??= Work(
+                    id: workId,
+                    title: 'Loading...',
+                    author: 'Loading...',
+                    tags: [],
+                    userAddedDate: DateTime.now(),
+                    readingProgress: ReadingProgress.empty(),
+                  );
+                  
+                  // Open reader for all works
+                  final returnUrl = await Navigator.push<String>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ReaderScreen(work: work),
+                    ),
+                  );
+                  
+                  // If reader returned a URL, navigate to it
+                  if (returnUrl != null && returnUrl.isNotEmpty) {
+                    if (_isWindows) {
+                      await _winController?.loadUrl(returnUrl);
+                    } else {
+                      await _controller?.loadRequest(Uri.parse(returnUrl));
+                    }
                   }
+                  return NavigationDecision.prevent;
                 }
                 return NavigationDecision.navigate;
               },
