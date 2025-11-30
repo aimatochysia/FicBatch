@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
 import '../repositories/work_repository.dart';
 import 'reader_screen.dart';
+import 'settings_tab.dart';
 
 class LibraryTab extends ConsumerStatefulWidget {
   const LibraryTab({super.key});
@@ -430,11 +431,18 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
   }
 
   Widget _grid(List works) {
+    // Get the grid columns setting
+    final settingsColumns = ref.watch(libraryGridColumnsProvider);
+    
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Responsive grid: fewer columns on smaller screens
+        // Responsive grid: use user setting, but fewer columns on smaller screens
         final isCompact = constraints.maxWidth < 600;
-        final crossAxisCount = isCompact ? 2 : 4;
+        // On compact screens, use minimum of 2 or the setting (max 3 for compact)
+        // On larger screens, use the user's setting
+        final crossAxisCount = isCompact 
+            ? (settingsColumns > 3 ? 2 : settingsColumns).clamp(1, 3)
+            : settingsColumns;
         final childAspectRatio = isCompact ? 0.8 : 0.7;
         
         return GridView.builder(
