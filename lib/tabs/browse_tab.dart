@@ -185,10 +185,11 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   final storage = ref.read(storageProvider);
                   
                   // Check if work is in library, otherwise create a temporary Work
+                  // The reader will load the actual work data from AO3
                   final Work workToOpen = storage.getWork(workId) ?? Work(
                     id: workId,
-                    title: 'Loading...',
-                    author: 'Loading...',
+                    title: 'Work #$workId',
+                    author: 'Unknown',
                     tags: [],
                     userAddedDate: DateTime.now(),
                     readingProgress: ReadingProgress.empty(),
@@ -1242,10 +1243,11 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
       final storage = ref.read(storageProvider);
       
       // Check if work is in library, otherwise create a temporary Work
+      // The reader will load the actual work data from AO3
       final Work workToOpen = storage.getWork(workId) ?? Work(
         id: workId,
-        title: 'Loading...',
-        author: 'Loading...',
+        title: 'Work #$workId',
+        author: 'Unknown',
         tags: [],
         userAddedDate: DateTime.now(),
         readingProgress: ReadingProgress.empty(),

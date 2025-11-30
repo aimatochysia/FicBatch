@@ -116,23 +116,43 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     return false;
   }
 
-  /// Get current URL from Windows webview
+  /// Get current URL from Windows webview (robust implementation)
   Future<String?> _getWindowsCurrentUrl() async {
     if (_winController == null) return null;
     try {
-      final result = await _winController!.executeScript('window.location.href');
-      if (result != null) {
-        String url = result.toString();
-        // Strip surrounding quotes if present
-        if (url.startsWith('"') && url.endsWith('"')) {
-          url = url.substring(1, url.length - 1);
-        }
-        return url;
+      final direct = await _winController!.executeScript('window.location.href');
+      if (direct is List && direct.isNotEmpty) {
+        return _stripQuotes(direct.first.toString()).trim();
+      }
+      if (direct is String && direct.isNotEmpty) {
+        return _stripQuotes(direct).trim();
+      }
+    } catch (_) {}
+
+    try {
+      final json = await _winController!.executeScript('JSON.stringify(window.location.href)');
+      if (json is List && json.isNotEmpty) {
+        final s = json.first.toString();
+        return _stripQuotes(s).trim();
+      }
+      if (json is String && json.isNotEmpty) {
+        return _stripQuotes(json).trim();
       }
     } catch (e) {
       debugPrint('Error getting Windows URL: $e');
     }
     return null;
+  }
+
+  /// Strip surrounding quotes from a string
+  String _stripQuotes(String s) {
+    final t = s.trim();
+    if (t.length >= 2 &&
+        ((t.startsWith('"') && t.endsWith('"')) ||
+            (t.startsWith("'") && t.endsWith("'")))) {
+      return t.substring(1, t.length - 1).replaceAll(r'\"', '"');
+    }
+    return t;
   }
 
   /// Handle navigation changes in Windows webview
@@ -175,7 +195,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           if (!link || !link.href) return;
           
           const url = link.href;
-          const currentWorkPattern = new RegExp('/works/$workId(/|\$|\\\\?)');
+          // Pattern matches: /works/{workId}/ or /works/{workId}? or /works/{workId} at end
+          const currentWorkPattern = new RegExp('/works/$workId(/|\\\\?|\$)');
           
           // Allow navigation within current work
           if (currentWorkPattern.test(url)) return;
