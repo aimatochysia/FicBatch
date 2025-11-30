@@ -12,6 +12,11 @@ class BrowseToolbar extends StatelessWidget {
   final VoidCallback onLoadSavedSearch;
   final VoidCallback onSaveToLibrary;
 
+  // Layout constants for compact mode (mobile-style navigation)
+  static const double _compactModeBreakpoint = 600;
+  static const double _compactButtonSize = 36;
+  static const double _compactIconSize = 20;
+
   const BrowseToolbar({
     super.key,
     required this.urlController,
@@ -31,12 +36,12 @@ class BrowseToolbar extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Use compact navigation buttons on smaller screens (like phone browsers)
-        final isCompact = constraints.maxWidth < 600;
+        final isCompact = constraints.maxWidth < _compactModeBreakpoint;
         
         return Row(
           children: [
             // Compact navigation cluster (like mobile browser)
-            _buildNavigationButtons(isCompact),
+            _buildNavigationButtons(context, isCompact),
             SizedBox(width: isCompact ? 4 : 8),
             
             Expanded(
@@ -115,12 +120,12 @@ class BrowseToolbar extends StatelessWidget {
   }
 
   /// Build navigation buttons - compact on small screens like mobile browsers
-  Widget _buildNavigationButtons(bool isCompact) {
+  Widget _buildNavigationButtons(BuildContext context, bool isCompact) {
     if (isCompact) {
       // Compact mode: use smaller icons with minimal padding, tightly grouped
       return Container(
         decoration: BoxDecoration(
-          color: Colors.grey.withOpacity(0.1),
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -166,10 +171,10 @@ class BrowseToolbar extends StatelessWidget {
   /// Build a compact icon button for mobile-style navigation
   Widget _compactIconButton(IconData icon, String tooltip, VoidCallback onPressed) {
     return SizedBox(
-      width: 36,
-      height: 36,
+      width: _compactButtonSize,
+      height: _compactButtonSize,
       child: IconButton(
-        icon: Icon(icon, size: 20),
+        icon: Icon(icon, size: _compactIconSize),
         tooltip: tooltip,
         onPressed: onPressed,
         padding: EdgeInsets.zero,
