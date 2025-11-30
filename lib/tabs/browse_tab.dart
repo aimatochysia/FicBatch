@@ -38,6 +38,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   String? _pendingThemeMode;
   bool _pageReady = false;
   bool _coverVisible = false;
+  bool _winInitialLoadComplete = false; // Track if initial page load is complete
   bool get _winInited => _winController != null && _winController!.value.isInitialized;
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
@@ -106,6 +107,10 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
             if (s.isNotEmpty) _handleInjectedMessage(s);
           } catch (_) {}
         });
+        // Listen for URL changes to intercept work page navigation
+        _winController!.historyChanged.listen((event) async {
+          await _handleWindowsUrlChange();
+        });
         _winController!.loadingState.listen((state) async {
           final loading = state == win.LoadingState.loading;
           if (mounted) {
@@ -153,6 +158,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
               setState(() {
                 _isLoading = false;
                 _readyToShow = true;
+                _winInitialLoadComplete = true;
               });
             }
             _pulseCover();
@@ -179,13 +185,21 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                   final storage = ref.read(storageProvider);
                   
                   // Check if work is in library, otherwise create a temporary Work
+                  // The reader will load the actual work data from AO3
                   final Work workToOpen = storage.getWork(workId) ?? Work(
                     id: workId,
-                    title: 'Loading...',
-                    author: 'Loading...',
+                    title: 'Work #$workId',
+                    author: 'Unknown',
                     tags: [],
                     userAddedDate: DateTime.now(),
                     readingProgress: ReadingProgress.empty(),
+                  );
+                  
+                  // Add to history
+                  await storage.addToHistory(
+                    workId: workToOpen.id,
+                    title: workToOpen.title,
+                    author: workToOpen.author,
                   );
                   
                   // Open reader for all works
@@ -1217,6 +1231,63 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
     setState(() {
       _currentUrl = (url ?? '').trim();
     });
+  }
+
+  /// Handle URL changes in Windows webview to intercept work page navigation
+  Future<void> _handleWindowsUrlChange() async {
+    if (!mounted || _winController == null) return;
+    
+    // Don't intercept until initial page load is complete
+    if (!_winInitialLoadComplete) return;
+    
+    final url = await _getWindowsCurrentUrl();
+    if (url == null) return;
+    
+    // Check if this is a work page (but not already viewing full work)
+    final workIdMatch = RegExp(r'/works/(\d+)(?:/chapters/\d+)?(?:[/?#]|$)').firstMatch(url);
+    if (workIdMatch != null && !url.contains('view_full_work')) {
+      final workId = workIdMatch.group(1)!;
+      final storage = ref.read(storageProvider);
+      
+      // Check if work is in library, otherwise create a temporary Work
+      // The reader will load the actual work data from AO3
+      final Work workToOpen = storage.getWork(workId) ?? Work(
+        id: workId,
+        title: 'Work #$workId',
+        author: 'Unknown',
+        tags: [],
+        userAddedDate: DateTime.now(),
+        readingProgress: ReadingProgress.empty(),
+      );
+      
+      // Add to history
+      await storage.addToHistory(
+        workId: workToOpen.id,
+        title: workToOpen.title,
+        author: workToOpen.author,
+      );
+      
+      // Go back to prevent staying on the work page
+      try {
+        await _winController!.goBack();
+      } catch (_) {
+        // If goBack fails, navigate to home
+        await _winController!.loadUrl('https://archiveofourown.org/');
+      }
+      
+      // Open reader for the work
+      final returnUrl = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReaderScreen(work: workToOpen),
+        ),
+      );
+      
+      // If reader returned a URL, navigate to it
+      if (returnUrl != null && returnUrl.isNotEmpty) {
+        await _winController?.loadUrl(returnUrl);
+      }
+    }
   }
 
   Future<void> _diagnoseListingDom(String stage) async {

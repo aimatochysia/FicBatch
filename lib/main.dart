@@ -10,6 +10,7 @@ import 'providers/theme_provider.dart';
 import 'providers/navigation_provider.dart';
 import 'providers/storage_provider.dart';
 import 'services/storage_service.dart';
+import 'services/sync_service.dart';
 
 import 'tabs/home_tab.dart';
 import 'tabs/library_tab.dart';
@@ -37,6 +38,14 @@ Future<void> main() async {
     // Log the error but continue to show the app
     debugPrint('Storage initialization error: $e');
     debugPrint('Stack trace: $stackTrace');
+  }
+
+  // Initialize sync service (notifications and background tasks)
+  try {
+    await SyncService.initializeNotifications();
+    await SyncService.initializeBackgroundSync();
+  } catch (e) {
+    debugPrint('Sync service initialization error: $e');
   }
 
   runApp(

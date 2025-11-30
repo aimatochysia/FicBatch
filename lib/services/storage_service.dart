@@ -248,6 +248,69 @@ class StorageService {
     final list = map[category] ?? const <String>[];
     return Set<String>.from(list);
   }
+
+  // History management methods
+  
+  /// Add or update a history entry for a work
+  /// If the same work was accessed on the same day, update it (move to top of that day)
+  /// If different day, add a new entry
+  Future<void> addToHistory({
+    required String workId,
+    required String title,
+    required String author,
+  }) async {
+    final historyList = await getHistory();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // Check if there's already an entry for this work today
+    final existingTodayIndex = historyList.indexWhere((entry) {
+      final entryDate = DateTime(
+        entry['accessedAt'] != null 
+            ? DateTime.parse(entry['accessedAt']).year 
+            : now.year,
+        entry['accessedAt'] != null 
+            ? DateTime.parse(entry['accessedAt']).month 
+            : now.month,
+        entry['accessedAt'] != null 
+            ? DateTime.parse(entry['accessedAt']).day 
+            : now.day,
+      );
+      return entry['workId'] == workId && entryDate == today;
+    });
+    
+    if (existingTodayIndex >= 0) {
+      // Update existing entry - move to top of today's entries
+      historyList.removeAt(existingTodayIndex);
+    }
+    
+    // Add new entry at the beginning
+    historyList.insert(0, {
+      'workId': workId,
+      'title': title,
+      'author': author,
+      'accessedAt': now.toIso8601String(),
+    });
+    
+    // Limit history to 500 entries
+    if (historyList.length > 500) {
+      historyList.removeRange(500, historyList.length);
+    }
+    
+    await settingsBox.put('history', historyList);
+  }
+  
+  /// Get all history entries
+  Future<List<Map<String, dynamic>>> getHistory() async {
+    final raw = settingsBox.get('history') as List?;
+    if (raw == null) return [];
+    return raw.map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+  
+  /// Clear all history
+  Future<void> clearHistory() async {
+    await settingsBox.delete('history');
+  }
 }
 
 Future<void> migrateHive() async {
