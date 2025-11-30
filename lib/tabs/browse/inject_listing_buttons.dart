@@ -112,7 +112,7 @@ Future<void> injectListingButtons({
       var btn = document.createElement('a');
       btn.href = '#';
       btn.className='__fb_save_btn';
-      btn.textContent='📥 Save to Library';
+      btn.textContent='Save';
       btn.style.cssText = [
         'display:inline-block',
         'margin-left:12px',
@@ -144,25 +144,25 @@ Future<void> injectListingButtons({
       btn.addEventListener('click', function(e){
         e.preventDefault();
         log('debug', 'click save', id);
-        btn.textContent='⏳ Saving...';
+        btn.textContent='⏳';
         btn.style.opacity='0.8';
         btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='✅ Saved!';
+          btn.textContent='✅';
           btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
           btn.style.borderColor='#040';
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
-          btn.textContent='❌ Error';
+          btn.textContent='❌';
           btn.style.background='linear-gradient(135deg, #555 0%, #777 100%)';
           btn.style.borderColor='#333';
         }).finally(function(){
           btn.style.opacity='1';
           btn.style.pointerEvents='auto';
           setTimeout(function(){ 
-            btn.textContent='📥 Save to Library'; 
+            btn.textContent='Saved'; 
             btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)';
             btn.style.borderColor='#700';
           }, 2500);
