@@ -112,27 +112,31 @@ Future<void> injectListingButtons({
       var btn = document.createElement('a');
       btn.href = '#';
       btn.className='__fb_save_btn';
-      btn.textContent='+ Save to Library';
+      btn.textContent='📥 Save to Library';
       btn.style.cssText = [
         'display:inline-block',
         'margin-left:12px',
-        'padding:6px 12px',
+        'margin-top:4px',
+        'margin-bottom:4px',
+        'padding:10px 18px',
         'background:linear-gradient(135deg, #900 0%, #c00 100%)',
         'color:#fff',
-        'border:none',
-        'border-radius:6px',
-        'font-size:13px',
-        'font-weight:600',
-        'line-height:1.2',
+        'border:2px solid #700',
+        'border-radius:8px',
+        'font-size:15px',
+        'font-weight:700',
+        'line-height:1.3',
         'vertical-align:middle',
         'float:right',
         'text-decoration:none',
         'cursor:pointer',
-        'box-shadow:0 2px 4px rgba(0,0,0,0.2)',
-        'transition:all 0.2s ease'
+        'box-shadow:0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+        'transition:all 0.2s ease',
+        'text-shadow:0 1px 2px rgba(0,0,0,0.3)',
+        'letter-spacing:0.5px'
       ].join(';');
-      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #d00 100%)'; btn.style.boxShadow='0 3px 6px rgba(0,0,0,0.3)'; btn.style.transform='translateY(-1px)'; };
-      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 2px 4px rgba(0,0,0,0.2)'; btn.style.transform='translateY(0)'; };
+      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #e00 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#900'; };
+      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#700'; };
 
       heading.appendChild(btn);
       log('info', 'button inserted', id);
@@ -140,25 +144,28 @@ Future<void> injectListingButtons({
       btn.addEventListener('click', function(e){
         e.preventDefault();
         log('debug', 'click save', id);
-        btn.textContent='Saving...';
-        btn.style.opacity='0.7';
+        btn.textContent='⏳ Saving...';
+        btn.style.opacity='0.8';
         btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='✓ Saved!';
-          btn.style.background='linear-gradient(135deg, #090 0%, #0a0 100%)';
+          btn.textContent='✅ Saved!';
+          btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
+          btn.style.borderColor='#040';
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
-          btn.textContent='✗ Error';
-          btn.style.background='linear-gradient(135deg, #666 0%, #888 100%)';
+          btn.textContent='❌ Error';
+          btn.style.background='linear-gradient(135deg, #555 0%, #777 100%)';
+          btn.style.borderColor='#333';
         }).finally(function(){
           btn.style.opacity='1';
           btn.style.pointerEvents='auto';
           setTimeout(function(){ 
-            btn.textContent='+ Save to Library'; 
-            btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; 
-          }, 2000);
+            btn.textContent='📥 Save to Library'; 
+            btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)';
+            btn.style.borderColor='#700';
+          }, 2500);
         });
       });
     }
