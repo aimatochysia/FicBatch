@@ -438,13 +438,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         result = rawResult.toString();
       }
       
-      if (result != null) {
-        final chaptersJson = jsonDecode(result);
-        setState(() {
-          _chapters = (chaptersJson as List)
-              .map((ch) => Chapter.fromJson(ch))
-              .toList();
-        });
+      if (result != null && result.isNotEmpty) {
+        // Handle different result formats from different platforms
+        // Mobile webview often returns double-quoted strings
+        String jsonStr = result;
+        
+        // Strip outer quotes if present (mobile webview issue)
+        jsonStr = _stripQuotes(jsonStr);
+        
+        // Unescape escaped quotes if present
+        if (jsonStr.contains(r'\"')) {
+          jsonStr = jsonStr.replaceAll(r'\"', '"');
+        }
+        
+        try {
+          final chaptersJson = jsonDecode(jsonStr);
+          if (chaptersJson is List) {
+            setState(() {
+              _chapters = chaptersJson
+                  .map((ch) => Chapter.fromJson(Map<String, dynamic>.from(ch)))
+                  .toList();
+            });
+            debugPrint('Extracted ${_chapters.length} chapters');
+          }
+        } catch (e) {
+          debugPrint('Error parsing chapters JSON: $e');
+          debugPrint('Raw result: $result');
+          debugPrint('Processed jsonStr: $jsonStr');
+        }
       }
     } catch (e) {
       debugPrint('Error extracting chapters: $e');
