@@ -112,18 +112,27 @@ Future<void> injectListingButtons({
       var btn = document.createElement('a');
       btn.href = '#';
       btn.className='__fb_save_btn';
-      btn.textContent='Save';
+      btn.textContent='+ Save to Library';
       btn.style.cssText = [
         'display:inline-block',
-        'margin-left:8px',
-        'padding:2px 6px',
-        'border:1px solid #888',
+        'margin-left:12px',
+        'padding:6px 12px',
+        'background:linear-gradient(135deg, #900 0%, #c00 100%)',
+        'color:#fff',
+        'border:none',
         'border-radius:6px',
-        'font-size:12px',
-        'line-height:1',
+        'font-size:13px',
+        'font-weight:600',
+        'line-height:1.2',
         'vertical-align:middle',
-        'float:right'
+        'float:right',
+        'text-decoration:none',
+        'cursor:pointer',
+        'box-shadow:0 2px 4px rgba(0,0,0,0.2)',
+        'transition:all 0.2s ease'
       ].join(';');
+      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #d00 100%)'; btn.style.boxShadow='0 3px 6px rgba(0,0,0,0.3)'; btn.style.transform='translateY(-1px)'; };
+      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 2px 4px rgba(0,0,0,0.2)'; btn.style.transform='translateY(0)'; };
 
       heading.appendChild(btn);
       log('info', 'button inserted', id);
@@ -132,16 +141,24 @@ Future<void> injectListingButtons({
         e.preventDefault();
         log('debug', 'click save', id);
         btn.textContent='Saving...';
-        btn.style.opacity='0.6';
+        btn.style.opacity='0.7';
+        btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='Saved';
+          btn.textContent='✓ Saved!';
+          btn.style.background='linear-gradient(135deg, #090 0%, #0a0 100%)';
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
-          btn.textContent='Error';
+          btn.textContent='✗ Error';
+          btn.style.background='linear-gradient(135deg, #666 0%, #888 100%)';
         }).finally(function(){
-          setTimeout(function(){ btn.textContent='Save'; btn.style.opacity='1'; }, 1200);
+          btn.style.opacity='1';
+          btn.style.pointerEvents='auto';
+          setTimeout(function(){ 
+            btn.textContent='+ Save to Library'; 
+            btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; 
+          }, 2000);
         });
       });
     }
