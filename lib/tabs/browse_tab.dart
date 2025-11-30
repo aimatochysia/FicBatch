@@ -731,7 +731,7 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
       }
 
       // Get existing categories for this work (if already saved)
-      final existingCategories = await storage.getCategoriesForWork(workId);
+      final existingCategories = await storage.getCategoriesForWork(work.id);
       final selected = Set<String>.from(existingCategories);
       final newCats = await showDialog<Set<String>>(
         context: context,
