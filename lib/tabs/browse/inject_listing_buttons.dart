@@ -1,17 +1,21 @@
 import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart' as win;
+import 'dart:convert';
 
 Future<void> injectListingButtons({
   required bool isWindows,
   required win.WebviewController? winController,
   required WebViewController? controller,
   void Function(String message)? dartDebugPrint,
+  List<String> savedWorkIds = const [],
 }) async {
-  const js = r"""
+  final savedIdsJson = jsonEncode(savedWorkIds);
+  final js = """
 (function(){
   try {
     var DEBUG = true;
+    var savedWorkIds = new Set($savedIdsJson);
 
     function notifyApp(obj){
       try {
@@ -36,6 +40,9 @@ Future<void> injectListingButtons({
         log('info', 'save_state reused', 'processed=' + size);
       } catch(_){}
     }
+
+    // Update saved IDs (for when this is called again with updated list)
+    window.__fb_savedWorkIds = savedWorkIds;
 
     async function saveWorkById(id){
       log('debug', 'saveWorkById fetch', id);
@@ -87,13 +94,13 @@ Future<void> injectListingButtons({
     }
 
     function findWorkId(li){
-      var m = (li.id||'').match(/work_(\d+)/);
+      var m = (li.id||'').match(/work_(\\d+)/);
       if (m) return m[1];
-      m = (li.className||'').match(/work-(\d+)/);
+      m = (li.className||'').match(/work-(\\d+)/);
       if (m) return m[1];
       var a = li.querySelector('a[href^="/works/"]');
       if (a) {
-        var mx = a.getAttribute('href').match(/\/works\/(\d+)/);
+        var mx = a.getAttribute('href').match(/\\/works\\/(\\d+)/);
         if (mx) return mx[1];
       }
       return null;
@@ -105,6 +112,15 @@ Future<void> injectListingButtons({
       if (window.__fb_save_state.processed.has(id)) { log('debug', 'skip (already processed)', id); return; }
       window.__fb_save_state.processed.add(id);
 
+      var isSaved = window.__fb_savedWorkIds && window.__fb_savedWorkIds.has(id);
+
+      // Apply darkening effect for saved works
+      if (isSaved) {
+        li.style.backgroundColor = 'rgba(0, 0, 0, 0.08)';
+        li.style.opacity = '0.85';
+        li.style.position = 'relative';
+      }
+
       var header = li.querySelector('.header.module') || li.querySelector('.header') || li;
       var heading = header.querySelector('h4.heading') || header.querySelector('.heading') || header;
       if (!heading) heading = header;
@@ -112,59 +128,97 @@ Future<void> injectListingButtons({
       var btn = document.createElement('a');
       btn.href = '#';
       btn.className='__fb_save_btn';
-      btn.textContent='Save';
-      btn.style.cssText = [
-        'display:inline-block',
-        'margin-left:12px',
-        'margin-top:4px',
-        'margin-bottom:4px',
-        'padding:10px 18px',
-        'background:linear-gradient(135deg, #900 0%, #c00 100%)',
-        'color:#fff',
-        'border:2px solid #700',
-        'border-radius:8px',
-        'font-size:15px',
-        'font-weight:700',
-        'line-height:1.3',
-        'vertical-align:middle',
-        'float:right',
-        'text-decoration:none',
-        'cursor:pointer',
-        'box-shadow:0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
-        'transition:all 0.2s ease',
-        'text-shadow:0 1px 2px rgba(0,0,0,0.3)',
-        'letter-spacing:0.5px'
-      ].join(';');
-      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #e00 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#900'; };
-      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#700'; };
+      
+      // Set initial text and style based on saved status
+      if (isSaved) {
+        btn.textContent='✓ Saved';
+        btn.style.cssText = [
+          'display:inline-block',
+          'margin-left:12px',
+          'margin-top:4px',
+          'margin-bottom:4px',
+          'padding:10px 18px',
+          'background:linear-gradient(135deg, #060 0%, #090 100%)',
+          'color:#fff',
+          'border:2px solid #040',
+          'border-radius:8px',
+          'font-size:15px',
+          'font-weight:700',
+          'line-height:1.3',
+          'vertical-align:middle',
+          'float:right',
+          'text-decoration:none',
+          'cursor:pointer',
+          'box-shadow:0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+          'transition:all 0.2s ease',
+          'text-shadow:0 1px 2px rgba(0,0,0,0.3)',
+          'letter-spacing:0.5px'
+        ].join(';');
+        btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #080 0%, #0b0 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#060'; };
+        btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#040'; };
+      } else {
+        btn.textContent='📥 Save';
+        btn.style.cssText = [
+          'display:inline-block',
+          'margin-left:12px',
+          'margin-top:4px',
+          'margin-bottom:4px',
+          'padding:10px 18px',
+          'background:linear-gradient(135deg, #900 0%, #c00 100%)',
+          'color:#fff',
+          'border:2px solid #700',
+          'border-radius:8px',
+          'font-size:15px',
+          'font-weight:700',
+          'line-height:1.3',
+          'vertical-align:middle',
+          'float:right',
+          'text-decoration:none',
+          'cursor:pointer',
+          'box-shadow:0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+          'transition:all 0.2s ease',
+          'text-shadow:0 1px 2px rgba(0,0,0,0.3)',
+          'letter-spacing:0.5px'
+        ].join(';');
+        btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #e00 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#900'; };
+        btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#700'; };
+      }
 
       heading.appendChild(btn);
-      log('info', 'button inserted', id);
+      log('info', 'button inserted', id + (isSaved ? ' (saved)' : ''));
 
       btn.addEventListener('click', function(e){
         e.preventDefault();
         log('debug', 'click save', id);
-        btn.textContent='⏳';
+        btn.textContent='⏳ Saving...';
         btn.style.opacity='0.8';
         btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='✅';
+          btn.textContent='✅ Saved!';
           btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
           btn.style.borderColor='#040';
+          // Apply darkening to the work item after save
+          li.style.backgroundColor = 'rgba(0, 0, 0, 0.08)';
+          li.style.opacity = '0.85';
+          // Add to saved set
+          if (window.__fb_savedWorkIds) window.__fb_savedWorkIds.add(id);
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
-          btn.textContent='❌';
+          btn.textContent='❌ Error';
           btn.style.background='linear-gradient(135deg, #555 0%, #777 100%)';
           btn.style.borderColor='#333';
         }).finally(function(){
           btn.style.opacity='1';
           btn.style.pointerEvents='auto';
           setTimeout(function(){ 
-            btn.textContent='Saved'; 
-            btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)';
-            btn.style.borderColor='#700';
+            // After animation, show as saved
+            btn.textContent='✓ Saved';
+            btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
+            btn.style.borderColor='#040';
+            btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #080 0%, #0b0 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#060'; };
+            btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#040'; };
           }, 2500);
         });
       });
