@@ -455,13 +455,23 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
             final w = works[i];
             return Card(
               child: InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ReaderScreen(work: w),
-                    ),
+                onTap: () async {
+                  // Add to history
+                  final storage = ref.read(storageProvider);
+                  await storage.addToHistory(
+                    workId: w.id,
+                    title: w.title,
+                    author: w.author,
                   );
+                  
+                  if (context.mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ReaderScreen(work: w),
+                      ),
+                    );
+                  }
                 },
                 // Long press to edit categories (alternative for compact mode)
                 onLongPress: () => _editCategoriesForWork(context, w.id),

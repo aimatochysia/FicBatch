@@ -195,6 +195,13 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                     readingProgress: ReadingProgress.empty(),
                   );
                   
+                  // Add to history
+                  await storage.addToHistory(
+                    workId: workToOpen.id,
+                    title: workToOpen.title,
+                    author: workToOpen.author,
+                  );
+                  
                   // Open reader for all works
                   final returnUrl = await Navigator.push<String>(
                     context,
@@ -1251,6 +1258,13 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
         tags: [],
         userAddedDate: DateTime.now(),
         readingProgress: ReadingProgress.empty(),
+      );
+      
+      // Add to history
+      await storage.addToHistory(
+        workId: workToOpen.id,
+        title: workToOpen.title,
+        author: workToOpen.author,
       );
       
       // Go back to prevent staying on the work page
