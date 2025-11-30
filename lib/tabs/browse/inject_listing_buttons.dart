@@ -157,7 +157,7 @@ Future<void> injectListingButtons({
         btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #080 0%, #0b0 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#060'; };
         btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#040'; };
       } else {
-        btn.textContent='📥 Save';
+        btn.textContent='Save';
         btn.style.cssText = [
           'display:inline-block',
           'margin-left:12px',
@@ -190,12 +190,12 @@ Future<void> injectListingButtons({
       btn.addEventListener('click', function(e){
         e.preventDefault();
         log('debug', 'click save', id);
-        btn.textContent='⏳ Saving...';
+        btn.textContent='Saving...';
         btn.style.opacity='0.8';
         btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='✅ Saved!';
+          btn.textContent='Saved!';
           btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
           btn.style.borderColor='#040';
           // Apply darkening to the work item after save
@@ -206,7 +206,7 @@ Future<void> injectListingButtons({
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
-          btn.textContent='❌ Error';
+          btn.textContent='Error';
           btn.style.background='linear-gradient(135deg, #555 0%, #777 100%)';
           btn.style.borderColor='#333';
         }).finally(function(){
