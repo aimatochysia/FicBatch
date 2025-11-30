@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
 import '../repositories/work_repository.dart';
 import 'reader_screen.dart';
+import 'settings_tab.dart';
 
 class LibraryTab extends ConsumerStatefulWidget {
   const LibraryTab({super.key});
@@ -430,79 +431,118 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
   }
 
   Widget _grid(List works) {
-    return GridView.builder(
-      itemCount: works.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 0.7,
-      ),
-      itemBuilder: (context, i) {
-        final w = works[i];
-        return Card(
-          child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ReaderScreen(work: w),
-                ),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    w.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text('by ${w.author}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 4),
-                  if ((w.summary ?? '').isNotEmpty)
-                    Text(
-                      w.summary!,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  const Spacer(),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    // Get the grid columns setting
+    final settingsColumns = ref.watch(libraryGridColumnsProvider);
+    
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Responsive grid: use user setting, but fewer columns on smaller screens
+        final isCompact = constraints.maxWidth < 600;
+        // On compact screens, use minimum of 2 or the setting (max 3 for compact)
+        // On larger screens, use the user's setting
+        final crossAxisCount = isCompact 
+            ? (settingsColumns > 3 ? 2 : settingsColumns).clamp(1, 3)
+            : settingsColumns;
+        final childAspectRatio = isCompact ? 0.8 : 0.7;
+        
+        return GridView.builder(
+          itemCount: works.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: childAspectRatio,
+          ),
+          itemBuilder: (context, i) {
+            final w = works[i];
+            return Card(
+              child: InkWell(
+                onTap: () async {
+                  // Add to history
+                  final storage = ref.read(storageProvider);
+                  await storage.addToHistory(
+                    workId: w.id,
+                    title: w.title,
+                    author: w.author,
+                  );
+                  
+                  if (context.mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ReaderScreen(work: w),
+                      ),
+                    );
+                  }
+                },
+                // Long press to edit categories (alternative for compact mode)
+                onLongPress: () => _editCategoriesForWork(context, w.id),
+                child: Padding(
+                  padding: EdgeInsets.all(isCompact ? 6.0 : 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      IconButton(
-                        onPressed: () async {
-                          final json = const JsonEncoder.withIndent('  ').convert(w.toJson());
-                          await showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Work JSON'),
-                              content: SizedBox(
-                                width: double.maxFinite,
-                                child: SingleChildScrollView(child: SelectableText(json)),
-                              ),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-                              ],
+                      Text(
+                        w.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: isCompact ? 13 : 14,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'by ${w.author}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: isCompact ? 11 : 12),
+                      ),
+                      const SizedBox(height: 4),
+                      if ((w.summary ?? '').isNotEmpty)
+                        Text(
+                          w.summary!,
+                          maxLines: isCompact ? 2 : 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: isCompact ? 10 : 12),
+                        ),
+                      const Spacer(),
+                      // Hide action buttons on compact screens (use long press instead)
+                      if (!isCompact)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              onPressed: () async {
+                                final json = const JsonEncoder.withIndent('  ').convert(w.toJson());
+                                await showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Work JSON'),
+                                    content: SizedBox(
+                                      width: double.maxFinite,
+                                      child: SingleChildScrollView(child: SelectableText(json)),
+                                    ),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+                                    ],
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.code),
+                              tooltip: 'Show JSON',
                             ),
-                          );
-                        },
-                        icon: const Icon(Icons.code),
-                        tooltip: 'Show JSON',
-                      ),
-                      IconButton(
-                        onPressed: () => _editCategoriesForWork(context, w.id),
-                        icon: const Icon(Icons.folder_open),
-                        tooltip: 'Edit Categories',
-                      ),
+                            IconButton(
+                              onPressed: () => _editCategoriesForWork(context, w.id),
+                              icon: const Icon(Icons.folder_open),
+                              tooltip: 'Edit Categories',
+                            ),
+                          ],
+                        ),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );

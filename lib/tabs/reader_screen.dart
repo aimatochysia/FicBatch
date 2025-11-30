@@ -116,6 +116,124 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     return false;
   }
 
+  /// Get current URL from Windows webview (robust implementation)
+  Future<String?> _getWindowsCurrentUrl() async {
+    if (_winController == null) return null;
+    try {
+      final direct = await _winController!.executeScript('window.location.href');
+      if (direct is List && direct.isNotEmpty) {
+        return _stripQuotes(direct.first.toString()).trim();
+      }
+      if (direct is String && direct.isNotEmpty) {
+        return _stripQuotes(direct).trim();
+      }
+    } catch (_) {}
+
+    try {
+      final json = await _winController!.executeScript('JSON.stringify(window.location.href)');
+      if (json is List && json.isNotEmpty) {
+        final s = json.first.toString();
+        return _stripQuotes(s).trim();
+      }
+      if (json is String && json.isNotEmpty) {
+        return _stripQuotes(json).trim();
+      }
+    } catch (e) {
+      debugPrint('Error getting Windows URL: $e');
+    }
+    return null;
+  }
+
+  /// Strip surrounding quotes from a string
+  String _stripQuotes(String s) {
+    final t = s.trim();
+    if (t.length >= 2 &&
+        ((t.startsWith('"') && t.endsWith('"')) ||
+            (t.startsWith("'") && t.endsWith("'")))) {
+      return t.substring(1, t.length - 1).replaceAll(r'\"', '"');
+    }
+    return t;
+  }
+
+  /// Handle navigation changes in Windows webview
+  void _handleWindowsNavigation(String url) {
+    // If navigating to another work, close reader and pass URL back
+    if (_isAnotherWork(url)) {
+      debugPrint('Windows reader: navigating to another work: $url');
+      Navigator.pop(context, url);
+      return;
+    }
+    
+    // If navigating to non-work AO3 URL that's not allowed, close and pass back
+    if (!_isAllowedNavigation(url) && url.contains('archiveofourown.org')) {
+      debugPrint('Windows reader: navigating to non-allowed AO3 URL: $url');
+      Navigator.pop(context, url);
+      return;
+    }
+    
+    // Block external (non-AO3) URLs by navigating back
+    if (!url.contains('archiveofourown.org') && !url.startsWith('about:')) {
+      debugPrint('Windows reader: blocked navigation to external URL: $url');
+      _winController?.goBack();
+    }
+  }
+
+  /// Inject JavaScript to intercept link clicks in Windows webview
+  Future<void> _injectNavigationInterceptor() async {
+    if (_winController == null) return;
+
+    final workId = widget.work.id;
+    final js = '''
+      (function() {
+        // Remove any existing interceptor
+        if (window.__fb_nav_interceptor) {
+          document.removeEventListener('click', window.__fb_nav_interceptor, true);
+        }
+        
+        window.__fb_nav_interceptor = function(e) {
+          const link = e.target.closest('a');
+          if (!link || !link.href) return;
+          
+          const url = link.href;
+          // Pattern matches: /works/{workId}/ or /works/{workId}? or /works/{workId} at end
+          const currentWorkPattern = new RegExp('/works/$workId(/|\\\\?|\$)');
+          
+          // Allow navigation within current work
+          if (currentWorkPattern.test(url)) return;
+          
+          // Allow anchor links
+          if (url.startsWith('#') || url.startsWith(window.location.href + '#')) return;
+          
+          // Block and report other navigation attempts
+          if (url.includes('archiveofourown.org')) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Send message to Dart for another work or non-allowed URL
+            if (window.chrome && chrome.webview && chrome.webview.postMessage) {
+              chrome.webview.postMessage(JSON.stringify({
+                type: 'navigation',
+                url: url
+              }));
+            }
+          } else {
+            // Block external URLs entirely
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('[FicBatch] Blocked external URL:', url);
+          }
+        };
+        
+        document.addEventListener('click', window.__fb_nav_interceptor, true);
+      })();
+    ''';
+
+    try {
+      await _winController!.executeScript(js);
+    } catch (e) {
+      debugPrint('Error injecting navigation interceptor: $e');
+    }
+  }
+
   Future<void> _initWebView() async {
     try {
       if (_isWindows) {
@@ -123,6 +241,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         _winController = win.WebviewController();
         await _winController!.initialize();
         await _winController!.setBackgroundColor(Colors.transparent);
+        await _winController!.setPopupWindowPolicy(win.WebviewPopupWindowPolicy.deny);
         
         _winController!.webMessage.listen((event) {
           try {
@@ -130,6 +249,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             if (s.isNotEmpty) _handleMessage(s);
           } catch (e) {
             debugPrint('Error handling Windows webview message: $e');
+          }
+        });
+        
+        // Listen for URL changes to handle navigation control
+        _winController!.historyChanged.listen((event) async {
+          final currentUrl = await _getWindowsCurrentUrl();
+          if (currentUrl != null) {
+            _handleWindowsNavigation(currentUrl);
           }
         });
         
@@ -145,6 +272,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           await _applyThemeStyles();
           await _applyFontSize();
           if (_isDesktop) await _applyScrollSpeed();
+          await _injectNavigationInterceptor();
           await _restoreReadingPosition();
           // Now content is ready to display
           setState(() {
@@ -310,13 +438,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         result = rawResult.toString();
       }
       
-      if (result != null) {
-        final chaptersJson = jsonDecode(result);
-        setState(() {
-          _chapters = (chaptersJson as List)
-              .map((ch) => Chapter.fromJson(ch))
-              .toList();
-        });
+      if (result != null && result.isNotEmpty) {
+        // Handle different result formats from different platforms
+        // Mobile webview often returns double-quoted strings
+        String jsonStr = result;
+        
+        // Strip outer quotes if present (mobile webview issue)
+        jsonStr = _stripQuotes(jsonStr);
+        
+        // Unescape escaped quotes if present
+        if (jsonStr.contains(r'\"')) {
+          jsonStr = jsonStr.replaceAll(r'\"', '"');
+        }
+        
+        try {
+          final chaptersJson = jsonDecode(jsonStr);
+          if (chaptersJson is List) {
+            setState(() {
+              _chapters = chaptersJson
+                  .map((ch) => Chapter.fromJson(Map<String, dynamic>.from(ch)))
+                  .toList();
+            });
+            debugPrint('Extracted ${_chapters.length} chapters');
+          }
+        } catch (e) {
+          debugPrint('Error parsing chapters JSON: $e');
+          debugPrint('Raw result: $result');
+          debugPrint('Processed jsonStr: $jsonStr');
+        }
       }
     } catch (e) {
       debugPrint('Error extracting chapters: $e');
@@ -597,6 +746,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         // Check if completed
         if (maxScroll > 0 && position >= maxScroll * 0.95) {
           _markAsCompleted();
+        }
+      } else if (data['type'] == 'navigation') {
+        // Handle navigation message from Windows webview
+        final url = data['url']?.toString() ?? '';
+        if (url.isNotEmpty) {
+          debugPrint('Windows reader: navigation message for URL: $url');
+          Navigator.pop(context, url);
         }
       }
     } catch (e) {
