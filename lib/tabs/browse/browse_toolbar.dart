@@ -28,101 +28,153 @@ class BrowseToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Use compact navigation buttons on smaller screens (like phone browsers)
+        final isCompact = constraints.maxWidth < 600;
         
-        IconButton(
-          icon: const Icon(Icons.home),
-          tooltip: 'Home',
-          onPressed: onHome,
-        ),
-        IconButton(
-          icon: const Icon(Icons.arrow_back),
-          tooltip: 'Back',
-          onPressed: onBack,
-        ),
-        IconButton(
-          icon: const Icon(Icons.arrow_forward),
-          tooltip: 'Forward',
-          onPressed: onForward,
-        ),
-        IconButton(
-          icon: const Icon(Icons.refresh),
-          tooltip: 'Refresh',
-          onPressed: onRefresh,
-        ),
-        const SizedBox(width: 8),
-        
-        Expanded(
-          child: TextField(
-            controller: urlController,
-            decoration: InputDecoration(
-              hintText: 'Search AO3 works...',
-              border: const OutlineInputBorder(),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: 'Quick Search',
-                    onPressed: onQuickSearch,
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.arrow_drop_down),
-                    tooltip: 'More search options',
-                    onSelected: (v) {
-                      if (v == 'quick') onQuickSearch();
-                      if (v == 'advanced') onAdvancedSearch();
-                    },
-                    itemBuilder: (ctx) => const [
-                      PopupMenuItem(
-                        value: 'quick',
-                        child: Text('Quick Search'),
+        return Row(
+          children: [
+            // Compact navigation cluster (like mobile browser)
+            _buildNavigationButtons(isCompact),
+            SizedBox(width: isCompact ? 4 : 8),
+            
+            Expanded(
+              child: TextField(
+                controller: urlController,
+                decoration: InputDecoration(
+                  hintText: 'Search AO3 works...',
+                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        tooltip: 'Quick Search',
+                        onPressed: onQuickSearch,
                       ),
-                      PopupMenuItem(
-                        value: 'advanced',
-                        child: Text('Advanced Search'),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        tooltip: 'More search options',
+                        onSelected: (v) {
+                          if (v == 'quick') onQuickSearch();
+                          if (v == 'advanced') onAdvancedSearch();
+                        },
+                        itemBuilder: (ctx) => const [
+                          PopupMenuItem(
+                            value: 'quick',
+                            child: Text('Quick Search'),
+                          ),
+                          PopupMenuItem(
+                            value: 'advanced',
+                            child: Text('Advanced Search'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        icon: const Icon(Icons.bookmark_add),
+                        tooltip: 'Save Current Search',
+                        onPressed: onSaveCurrentSearch,
+                      ),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        tooltip: 'Bookmarks',
+                        onSelected: (v) {
+                          if (v == 'save') onSaveCurrentSearch();
+                          if (v == 'load') onLoadSavedSearch();
+                        },
+                        itemBuilder: (ctx) => const [
+                          PopupMenuItem(
+                            value: 'save',
+                            child: Text('Save Current Search'),
+                          ),
+                          PopupMenuItem(
+                            value: 'load',
+                            child: Text('Load Saved Search'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  const SizedBox(width: 6),
-                  IconButton(
-                    icon: const Icon(Icons.bookmark_add),
-                    tooltip: 'Save Current Search',
-                    onPressed: onSaveCurrentSearch,
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.arrow_drop_down),
-                    tooltip: 'Bookmarks',
-                    onSelected: (v) {
-                      if (v == 'save') onSaveCurrentSearch();
-                      if (v == 'load') onLoadSavedSearch();
-                    },
-                    itemBuilder: (ctx) => const [
-                      PopupMenuItem(
-                        value: 'save',
-                        child: Text('Save Current Search'),
-                      ),
-                      PopupMenuItem(
-                        value: 'load',
-                        child: Text('Load Saved Search'),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
+                onSubmitted: (_) => onQuickSearch(),
               ),
             ),
-            onSubmitted: (_) => onQuickSearch(),
+            SizedBox(width: isCompact ? 4 : 8),
+            IconButton(
+              icon: const Icon(Icons.save_alt),
+              tooltip: 'Save to Library',
+              onPressed: onSaveToLibrary,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Build navigation buttons - compact on small screens like mobile browsers
+  Widget _buildNavigationButtons(bool isCompact) {
+    if (isCompact) {
+      // Compact mode: use smaller icons with minimal padding, tightly grouped
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _compactIconButton(Icons.arrow_back, 'Back', onBack),
+            _compactIconButton(Icons.arrow_forward, 'Forward', onForward),
+            _compactIconButton(Icons.refresh, 'Refresh', onRefresh),
+            _compactIconButton(Icons.home, 'Home', onHome),
+          ],
+        ),
+      );
+    } else {
+      // Standard mode: regular icon buttons
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            tooltip: 'Home',
+            onPressed: onHome,
           ),
-        ),
-        const SizedBox(width: 8),
-        IconButton(
-          icon: const Icon(Icons.save_alt),
-          tooltip: 'Save to Library',
-          onPressed: onSaveToLibrary,
-        ),
-      ],
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'Back',
+            onPressed: onBack,
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_forward),
+            tooltip: 'Forward',
+            onPressed: onForward,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: onRefresh,
+          ),
+        ],
+      );
+    }
+  }
+
+  /// Build a compact icon button for mobile-style navigation
+  Widget _compactIconButton(IconData icon, String tooltip, VoidCallback onPressed) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: IconButton(
+        icon: Icon(icon, size: 20),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+      ),
     );
   }
 }
