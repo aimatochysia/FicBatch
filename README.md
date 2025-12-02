@@ -19,4 +19,14 @@ It acts as a specialized AO3 browser with an integrated reader, advanced library
 <p>Issues and pull requests are welcome. Whether reporting bugs, requesting features, or contributing code, feedback is always appreciated.</p>
 
 <h2>License:</h2>
-<a href="https://github.com/aimatochysia/FicBatch">FicBatch</a> © 2025 by <a href="https://petramichael.vercel.app">Petra Michael</a> is licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/nc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;">
+<a href="https://github.com/aimatochysia/FicBatch">FicBatch</a> © 2025 by 
+<a href="https://petramichael.vercel.app">Petra Michael</a> is licensed under 
+<a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a>
+<span style="display:inline-flex;vertical-align:middle;margin-left:4px;">
+  <img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="CC" style="height:1em;margin-right:2px;">
+  <img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="BY" style="height:1em;margin-right:2px;">
+  <img src="https://mirrors.creativecommons.org/presskit/icons/nc.svg" alt="NC" style="height:1em;margin-right:2px;">
+  <img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg" alt="SA" style="height:1em;">
+</span>
+
+
