@@ -155,10 +155,20 @@ class HistoryTab extends ConsumerWidget {
   }
 
   Widget _buildHistoryTile(BuildContext context, dynamic storage, Map<String, dynamic> entry) {
-    final workId = entry['workId'] as String;
-    final title = entry['title'] as String;
-    final author = entry['author'] as String;
-    final accessedAt = DateTime.parse(entry['accessedAt']);
+    final workId = entry['workId'] as String? ?? '';
+    final title = entry['title'] as String? ?? 'Unknown Work';
+    final author = entry['author'] as String? ?? 'Unknown Author';
+    final accessedAtStr = entry['accessedAt'] as String?;
+    
+    // Skip entries with missing required fields
+    if (workId.isEmpty || accessedAtStr == null) {
+      return const SizedBox.shrink();
+    }
+    
+    final accessedAt = DateTime.tryParse(accessedAtStr);
+    if (accessedAt == null) {
+      return const SizedBox.shrink();
+    }
     
     return ListTile(
       title: Text(
