@@ -7,7 +7,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart' as win;
 import '../models/work.dart';
 import '../models/reading_progress.dart';
-import '../models/history_entry.dart';
 import '../providers/storage_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/storage_service.dart';
@@ -44,6 +43,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _loadReaderSettings();
     _initWebView();
     _startAutosaveTimer();
+    // Add to history immediately when reader opens
+    _addToHistoryOnOpen();
+  }
+
+  /// Add work to history when reader opens
+  Future<void> _addToHistoryOnOpen() async {
+    try {
+      final storage = ref.read(storageProvider);
+      await storage.addToHistory(
+        workId: widget.work.id,
+        title: widget.work.title,
+        author: widget.work.author,
+      );
+    } catch (e) {
+      debugPrint('Error adding to history on open: $e');
+    }
   }
 
   @override
@@ -769,6 +784,25 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (!_hasUnsavedChanges) return;
 
     final storage = ref.read(storageProvider);
+    
+    // Only save progress if work is actually in library (not a temporary work)
+    final existingWork = storage.getWork(widget.work.id);
+    if (existingWork == null) {
+      // This is a temporary work that was never saved to library
+      // Just update history timestamp, don't save to library
+      await storage.addToHistory(
+        workId: widget.work.id,
+        title: widget.work.title,
+        author: widget.work.author,
+      );
+      
+      setState(() {
+        _hasUnsavedChanges = false;
+        _lastSaveTime = DateTime.now();
+      });
+      return;
+    }
+    
     final chapterAnchor = _currentChapterIndex < _chapters.length
         ? _chapters[_currentChapterIndex].anchor
         : null;
@@ -791,8 +825,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
     await storage.saveWork(updatedWork);
 
-    // Add to history
-    await _addToHistory(chapterName);
+    // Update history timestamp (work was already added to history on open)
+    await storage.addToHistory(
+      workId: widget.work.id,
+      title: widget.work.title,
+      author: widget.work.author,
+    );
 
     setState(() {
       _hasUnsavedChanges = false;
@@ -800,35 +838,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     });
   }
 
-  Future<void> _addToHistory(String? chapterName) async {
-    final storage = ref.read(storageProvider);
-    final historyBox = storage.settingsBox;
-    
-    final historyList = (historyBox.get('history') as List?)?.cast<Map>() ?? [];
-    
-    // Add new entry
-    final entry = HistoryEntry(
-      workId: widget.work.id,
-      title: widget.work.title,
-      author: widget.work.author,
-      chapterIndex: _currentChapterIndex,
-      chapterName: chapterName,
-      scrollPosition: _currentScrollPosition,
-      accessedAt: DateTime.now(),
-    );
-
-    historyList.insert(0, entry.toJson());
-    
-    // Keep only last 100 entries
-    if (historyList.length > 100) {
-      historyList.removeRange(100, historyList.length);
-    }
-
-    await historyBox.put('history', historyList);
-  }
-
   Future<void> _markAsCompleted() async {
     final storage = ref.read(storageProvider);
+    
+    // Only mark as completed if work is actually in library (not a temporary work)
+    final existingWork = storage.getWork(widget.work.id);
+    if (existingWork == null) {
+      // This is a temporary work that was never saved to library, don't save
+      return;
+    }
+    
     final updatedProgress = widget.work.readingProgress.copyWith(
       isCompleted: true,
     );
