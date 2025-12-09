@@ -61,6 +61,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Check if the current work is a temporary work (not saved in library)
+  bool _isTemporaryWork() {
+    final storage = ref.read(storageProvider);
+    return storage.getWork(widget.work.id) == null;
+  }
+
   @override
   void dispose() {
     _autosaveTimer?.cancel();
@@ -786,8 +792,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final storage = ref.read(storageProvider);
     
     // Only save progress if work is actually in library (not a temporary work)
-    final existingWork = storage.getWork(widget.work.id);
-    if (existingWork == null) {
+    if (_isTemporaryWork()) {
       // This is a temporary work that was never saved to library
       // Just update history timestamp, don't save to library
       await storage.addToHistory(
@@ -839,15 +844,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Future<void> _markAsCompleted() async {
-    final storage = ref.read(storageProvider);
-    
     // Only mark as completed if work is actually in library (not a temporary work)
-    final existingWork = storage.getWork(widget.work.id);
-    if (existingWork == null) {
+    if (_isTemporaryWork()) {
       // This is a temporary work that was never saved to library, don't save
       return;
     }
     
+    final storage = ref.read(storageProvider);
     final updatedProgress = widget.work.readingProgress.copyWith(
       isCompleted: true,
     );

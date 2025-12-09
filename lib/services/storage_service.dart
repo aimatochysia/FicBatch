@@ -268,18 +268,18 @@ class StorageService {
     
     // Check if there's already an entry for this work today
     final existingTodayIndex = historyList.indexWhere((entry) {
-      final entryDate = DateTime(
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).year 
-            : now.year,
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).month 
-            : now.month,
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).day 
-            : now.day,
-      );
-      return entry['workId'] == workId && entryDate == today;
+      if (entry['workId'] != workId) return false;
+      
+      final accessedAtStr = entry['accessedAt'];
+      if (accessedAtStr == null) return false;
+      
+      try {
+        final accessedAt = DateTime.parse(accessedAtStr);
+        final entryDate = DateTime(accessedAt.year, accessedAt.month, accessedAt.day);
+        return entryDate == today;
+      } catch (_) {
+        return false;
+      }
     });
     
     if (existingTodayIndex >= 0) {
