@@ -195,12 +195,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
                     readingProgress: ReadingProgress.empty(),
                   );
                   
-                  // Add to history
-                  await storage.addToHistory(
-                    workId: workToOpen.id,
-                    title: workToOpen.title,
-                    author: workToOpen.author,
-                  );
+                  // History will be updated automatically when reader opens
                   
                   // Open reader for all works
                   final returnUrl = await Navigator.push<String>(
@@ -1260,12 +1255,7 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
         readingProgress: ReadingProgress.empty(),
       );
       
-      // Add to history
-      await storage.addToHistory(
-        workId: workToOpen.id,
-        title: workToOpen.title,
-        author: workToOpen.author,
-      );
+      // History will be updated automatically when reader opens
       
       // Go back to prevent staying on the work page
       try {

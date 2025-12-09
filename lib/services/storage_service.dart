@@ -30,6 +30,9 @@ class StorageService {
       await Hive.openBox(settingsBoxName);
 
       await migrateHive();
+      
+      // Clean up any invalid history entries
+      await cleanupHistory();
 
       _initialized = true;
     } catch (e, stackTrace) {
@@ -265,18 +268,18 @@ class StorageService {
     
     // Check if there's already an entry for this work today
     final existingTodayIndex = historyList.indexWhere((entry) {
-      final entryDate = DateTime(
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).year 
-            : now.year,
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).month 
-            : now.month,
-        entry['accessedAt'] != null 
-            ? DateTime.parse(entry['accessedAt']).day 
-            : now.day,
-      );
-      return entry['workId'] == workId && entryDate == today;
+      if (entry['workId'] != workId) return false;
+      
+      final accessedAtStr = entry['accessedAt'];
+      if (accessedAtStr == null) return false;
+      
+      try {
+        final accessedAt = DateTime.parse(accessedAtStr);
+        final entryDate = DateTime(accessedAt.year, accessedAt.month, accessedAt.day);
+        return entryDate == today;
+      } catch (_) {
+        return false;
+      }
     });
     
     if (existingTodayIndex >= 0) {
@@ -304,12 +307,36 @@ class StorageService {
   Future<List<Map<String, dynamic>>> getHistory() async {
     final raw = settingsBox.get('history') as List?;
     if (raw == null) return [];
-    return raw.map((e) => Map<String, dynamic>.from(e)).toList();
+    
+    // Filter out invalid entries and return only valid ones
+    final validEntries = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      try {
+        final entry = Map<String, dynamic>.from(item);
+        // Validate required fields
+        if (entry['workId'] != null && 
+            entry['title'] != null && 
+            entry['author'] != null &&
+            entry['accessedAt'] != null) {
+          validEntries.add(entry);
+        }
+      } catch (e) {
+        debugPrint('Skipping invalid history entry: $e');
+      }
+    }
+    
+    return validEntries;
   }
   
   /// Clear all history
   Future<void> clearHistory() async {
     await settingsBox.delete('history');
+  }
+  
+  /// Clean up invalid history entries
+  Future<void> cleanupHistory() async {
+    final validEntries = await getHistory();
+    await settingsBox.put('history', validEntries);
   }
 }
 

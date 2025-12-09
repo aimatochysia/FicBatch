@@ -456,14 +456,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
             return Card(
               child: InkWell(
                 onTap: () async {
-                  // Add to history
-                  final storage = ref.read(storageProvider);
-                  await storage.addToHistory(
-                    workId: w.id,
-                    title: w.title,
-                    author: w.author,
-                  );
-                  
+                  // History will be updated automatically when reader opens
                   if (context.mounted) {
                     Navigator.push(
                       context,
