@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
 import '../repositories/work_repository.dart';
+import '../services/download_service.dart';
+import '../services/library_export_service.dart';
+import '../models/work.dart';
 import 'reader_screen.dart';
 import 'settings_tab.dart';
 
@@ -14,6 +17,193 @@ class LibraryTab extends ConsumerStatefulWidget {
 }
 
 class _LibraryTabState extends ConsumerState<LibraryTab> {
+  bool _isDownloading = false;
+  String _downloadProgress = '';
+  
+  Future<void> _downloadWork(Work work) async {
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 'Downloading ${work.title}...';
+    });
+    
+    try {
+      final path = await DownloadService.downloadWork(work.id);
+      
+      if (path != null) {
+        // Update work status in storage
+        final storage = ref.read(storageProvider);
+        final updatedWork = work.copyWith(
+          isDownloaded: true,
+          downloadedAt: DateTime.now(),
+        );
+        await storage.saveWork(updatedWork);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Downloaded "${work.title}"')),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to download "${work.title}"')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloading = false;
+          _downloadProgress = '';
+        });
+      }
+    }
+  }
+  
+  Future<void> _downloadCategory(String category, List<Work> works) async {
+    if (works.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No works to download in this category')),
+      );
+      return;
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Download Category'),
+        content: Text('Download ${works.length} work(s) from "$category"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true) return;
+    
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 'Starting download...';
+    });
+    
+    try {
+      int downloaded = 0;
+      int failed = 0;
+      
+      for (int i = 0; i < works.length; i++) {
+        final work = works[i];
+        
+        if (mounted) {
+          setState(() {
+            _downloadProgress = 'Downloading ${i + 1}/${works.length}: ${work.title}';
+          });
+        }
+        
+        final path = await DownloadService.downloadWork(work.id);
+        
+        if (path != null) {
+          downloaded++;
+          // Update work status
+          final storage = ref.read(storageProvider);
+          final updatedWork = work.copyWith(
+            isDownloaded: true,
+            downloadedAt: DateTime.now(),
+          );
+          await storage.saveWork(updatedWork);
+        } else {
+          failed++;
+        }
+        
+        // Throttle downloads
+        if (i < works.length - 1) {
+          await Future.delayed(const Duration(milliseconds: 1000));
+        }
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded $downloaded work(s)${failed > 0 ? ', $failed failed' : ''}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloading = false;
+          _downloadProgress = '';
+        });
+      }
+    }
+  }
+
+  Future<void> _showCategoryOptionsDialog(String category, List<Work> works) async {
+    final storage = ref.read(storageProvider);
+    final exportService = LibraryExportService(storage);
+    final isAutoDownload = await exportService.isCategoryAutoDownload(category);
+    
+    if (!mounted) return;
+    
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Category: $category'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.download),
+                title: const Text('Download All'),
+                subtitle: Text('${works.length} work(s)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _downloadCategory(category, works);
+                },
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.sync),
+                title: const Text('Auto-Download'),
+                subtitle: const Text('Download new/updated works'),
+                value: isAutoDownload,
+                onChanged: (value) async {
+                  await exportService.setCategoryAutoDownload(category, value);
+                  setDialogState(() {});
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _editCategoriesForWork(BuildContext context, String workId) async {
     final storage = ref.read(storageProvider);
     final allCats = List<String>.from(await storage.getCategories());
@@ -388,6 +578,22 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                       ),
                     ],
                   ),
+                  // Download progress indicator
+                  if (_isDownloading)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_downloadProgress, style: const TextStyle(fontSize: 12))),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 8),
                   TabBar(
                     isScrollable: true,
@@ -403,7 +609,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                           error: (e, _) => Center(child: Text('Error: $e')),
                           data: (allWorks) {
                             if (cat == 'All') {
-                              return _grid(allWorks);
+                              return _buildCategoryContent(cat, allWorks, allWorks);
                             }
                             final idsAsync = ref.watch(categoryWorksProvider(cat));
                             return idsAsync.when(
@@ -411,7 +617,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                               error: (e, _) => Center(child: Text('Error: $e')),
                               data: (ids) {
                                 final filtered = allWorks.where((w) => ids.contains(w.id)).toList();
-                                return _grid(filtered);
+                                return _buildCategoryContent(cat, filtered, allWorks);
                               },
                             );
                           },
@@ -427,6 +633,34 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
           error: (e, _) => Center(child: Text('Error: $e')),
         ),
       ),
+    );
+  }
+
+  Widget _buildCategoryContent(String category, List<Work> works, List<Work> allWorks) {
+    return Column(
+      children: [
+        // Category action bar (only for specific categories, not 'All')
+        if (category != 'All')
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _isDownloading ? null : () => _downloadCategory(category, works),
+                  icon: const Icon(Icons.download, size: 16),
+                  label: Text('Download All (${works.length})'),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => _showCategoryOptionsDialog(category, works),
+                  icon: const Icon(Icons.settings),
+                  tooltip: 'Category Options',
+                ),
+              ],
+            ),
+          ),
+        Expanded(child: _grid(works)),
+      ],
     );
   }
 
@@ -510,25 +744,14 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
+                            // Download button
                             IconButton(
-                              onPressed: () async {
-                                final json = const JsonEncoder.withIndent('  ').convert(w.toJson());
-                                await showDialog(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text('Work JSON'),
-                                    content: SizedBox(
-                                      width: double.maxFinite,
-                                      child: SingleChildScrollView(child: SelectableText(json)),
-                                    ),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-                                    ],
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.code),
-                              tooltip: 'Show JSON',
+                              onPressed: _isDownloading ? null : () => _downloadWork(w),
+                              icon: Icon(
+                                w.isDownloaded ? Icons.download_done : Icons.download,
+                                color: w.isDownloaded ? Colors.green : null,
+                              ),
+                              tooltip: w.isDownloaded ? 'Downloaded' : 'Download',
                             ),
                             IconButton(
                               onPressed: () => _editCategoriesForWork(context, w.id),

@@ -1,9 +1,14 @@
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, File;
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/storage_provider.dart';
 import '../services/sync_service.dart';
+import '../services/library_export_service.dart';
+import '../services/download_service.dart';
 
 /// Provider for library grid columns setting
 final libraryGridColumnsProvider = StateNotifierProvider<LibraryGridColumnsNotifier, int>((ref) {
@@ -133,6 +138,8 @@ class SettingsTab extends ConsumerStatefulWidget {
 
 class _SettingsTabState extends ConsumerState<SettingsTab> {
   bool _isSyncing = false;
+  bool _isExporting = false;
+  bool _isImporting = false;
 
   Future<void> _performManualSync() async {
     setState(() => _isSyncing = true);
@@ -182,6 +189,243 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
         setState(() => _isSyncing = false);
       }
     }
+  }
+
+  Future<void> _exportLibrary() async {
+    setState(() => _isExporting = true);
+    
+    try {
+      final storage = ref.read(storageProvider);
+      final exportService = LibraryExportService(storage);
+      
+      final filePath = await exportService.exportToFile();
+      
+      if (mounted) {
+        _showExportSuccessDialog(filePath);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
+    }
+  }
+
+  void _showExportSuccessDialog(String filePath) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Export Successful'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Library exported successfully to:'),
+            const SizedBox(height: 8),
+            SelectableText(
+              filePath,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'You can copy this file to another device and import it there.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: filePath));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Path copied to clipboard')),
+              );
+            },
+            child: const Text('Copy Path'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importLibrary() async {
+    // Show import dialog with text input for JSON
+    final controller = TextEditingController();
+    
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import Library'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Paste the library JSON content below, or enter a file path:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                  hintText: '{"version": 1, "works": [...], ...}\n\nOr paste file path',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Import mode:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '• Merge: Add new works, update existing (preserve reading progress)\n'
+                '• Replace: Clear library and import all data',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'content': controller.text,
+              'mode': ImportMode.merge,
+            }),
+            child: const Text('Merge Import'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'content': controller.text,
+              'mode': ImportMode.replace,
+            }),
+            child: const Text('Replace All'),
+          ),
+        ],
+      ),
+    );
+    
+    controller.dispose();
+    
+    if (result == null) return;
+    
+    final content = result['content'] as String;
+    final mode = result['mode'] as ImportMode;
+    
+    if (content.isEmpty) return;
+    
+    setState(() => _isImporting = true);
+    
+    try {
+      final storage = ref.read(storageProvider);
+      final exportService = LibraryExportService(storage);
+      
+      ImportResult importResult;
+      
+      // Check if content is a file path
+      if (_isFilePath(content)) {
+        importResult = await exportService.importFromFile(content.trim(), mode: mode);
+      } else {
+        importResult = await exportService.importFromJson(content, mode: mode);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import complete: ${importResult.toSummary()}'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isImporting = false);
+      }
+    }
+  }
+
+  bool _isFilePath(String content) {
+    final trimmed = content.trim();
+    // Check if it looks like a file path
+    if (Platform.isWindows) {
+      return trimmed.contains(':\\') || trimmed.startsWith('\\\\');
+    } else {
+      return trimmed.startsWith('/');
+    }
+  }
+
+  Future<void> _showStorageInfo() async {
+    final storage = ref.read(storageProvider);
+    final works = storage.getAllWorks();
+    final categories = await storage.getCategories();
+    final downloadSize = await DownloadService.getStorageUsage();
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Storage Info'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _storageInfoRow('Works in library', '${works.length}'),
+            _storageInfoRow('Categories', '${categories.length}'),
+            _storageInfoRow('Downloaded works', '${works.where((w) => w.isDownloaded).length}'),
+            _storageInfoRow('Download storage', _formatBytes(downloadSize)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _storageInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   @override
@@ -318,6 +562,60 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                     : const Icon(Icons.sync),
                 label: Text(_isSyncing ? 'Syncing...' : 'Sync Now'),
               ),
+            ),
+            
+            const Divider(),
+            
+            // Data Management Section
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Data Management',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            
+            // Export Library
+            ListTile(
+              leading: const Icon(Icons.upload),
+              title: const Text('Export Library'),
+              subtitle: const Text('Save library to JSON file'),
+              trailing: _isExporting
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right),
+              onTap: _isExporting ? null : _exportLibrary,
+            ),
+            
+            // Import Library
+            ListTile(
+              leading: const Icon(Icons.download),
+              title: const Text('Import Library'),
+              subtitle: const Text('Load library from JSON file or data'),
+              trailing: _isImporting
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right),
+              onTap: _isImporting ? null : _importLibrary,
+            ),
+            
+            // Storage Info
+            ListTile(
+              leading: const Icon(Icons.storage),
+              title: const Text('Storage Info'),
+              subtitle: const Text('View storage usage'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _showStorageInfo,
             ),
             
             const Divider(),
