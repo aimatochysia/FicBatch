@@ -150,7 +150,7 @@ class LibraryExportService {
         final workIds = List<String>.from(entry.value);
         
         for (final workId in workIds) {
-          final existingCats = await _storage.getCategoriesForWork(workId);
+          final existingCats = Set<String>.from(await _storage.getCategoriesForWork(workId));
           if (!existingCats.contains(category)) {
             existingCats.add(category);
             await _storage.setCategoriesForWork(workId, existingCats);
