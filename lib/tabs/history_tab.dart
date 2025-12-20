@@ -1,16 +1,98 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
+import '../services/storage_service.dart';
 import '../models/work.dart';
 import '../models/reading_progress.dart';
 import 'reader_screen.dart';
 
-class HistoryTab extends ConsumerWidget {
+class HistoryTab extends ConsumerStatefulWidget {
   const HistoryTab({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends ConsumerState<HistoryTab> {
+  List<Map<String, dynamic>>? _history;
+  bool _isLoading = true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+  
+  Future<void> _loadHistory() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+    
+    final storage = ref.read(storageProvider);
+    final history = await storage.getHistory();
+    
+    if (mounted) {
+      setState(() {
+        _history = history;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final storage = ref.watch(storageProvider);
+    final isMobile = Platform.isAndroid || Platform.isIOS;
+
+    Widget buildContent() {
+      if (_isLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+
+      final history = _history ?? [];
+
+      if (history.isEmpty) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.history,
+                size: 64,
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No reading history yet',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Works you open will appear here',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      // Group history by day
+      final groupedHistory = _groupByDay(history);
+      
+      return ListView.builder(
+        itemCount: groupedHistory.length,
+        itemBuilder: (context, index) {
+          final group = groupedHistory[index];
+          return _buildDayGroup(context, storage, group);
+        },
+      );
+    }
 
     return SafeArea(
       child: Column(
@@ -27,72 +109,27 @@ class HistoryTab extends ConsumerWidget {
                 ),
                 const Spacer(),
                 IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh',
+                  onPressed: _loadHistory,
+                ),
+                IconButton(
                   icon: const Icon(Icons.delete_outline),
                   tooltip: 'Clear history',
-                  onPressed: () => _showClearDialog(context, ref),
+                  onPressed: () => _showClearDialog(context),
                 ),
               ],
             ),
           ),
           
-          // History list
+          // History list with pull-to-refresh for mobile
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: storage.getHistory(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                }
-
-                final history = snapshot.data ?? [];
-
-                if (history.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.history,
-                          size: 64,
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No reading history yet',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Works you open will appear here',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                // Group history by day
-                final groupedHistory = _groupByDay(history);
-                
-                return ListView.builder(
-                  itemCount: groupedHistory.length,
-                  itemBuilder: (context, index) {
-                    final group = groupedHistory[index];
-                    return _buildDayGroup(context, ref, group);
-                  },
-                );
-              },
-            ),
+            child: isMobile
+                ? RefreshIndicator(
+                    onRefresh: _loadHistory,
+                    child: buildContent(),
+                  )
+                : buildContent(),
           ),
         ],
       ),
@@ -128,9 +165,7 @@ class HistoryTab extends ConsumerWidget {
     return groups;
   }
 
-  Widget _buildDayGroup(BuildContext context, WidgetRef ref, _DayGroup group) {
-    final storage = ref.watch(storageProvider);
-    
+  Widget _buildDayGroup(BuildContext context, StorageService storage, _DayGroup group) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -154,7 +189,7 @@ class HistoryTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildHistoryTile(BuildContext context, dynamic storage, Map<String, dynamic> entry) {
+  Widget _buildHistoryTile(BuildContext context, StorageService storage, Map<String, dynamic> entry) {
     final workId = entry['workId'] as String;
     final title = entry['title'] as String;
     final author = entry['author'] as String;
@@ -221,7 +256,7 @@ class HistoryTab extends ConsumerWidget {
     return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _showClearDialog(BuildContext context, WidgetRef ref) async {
+  Future<void> _showClearDialog(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -243,8 +278,7 @@ class HistoryTab extends ConsumerWidget {
     if (confirmed == true) {
       final storage = ref.read(storageProvider);
       await storage.clearHistory();
-      // Force rebuild
-      (context as Element).markNeedsBuild();
+      _loadHistory();
     }
   }
 }

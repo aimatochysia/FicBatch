@@ -11,7 +11,8 @@ Future<void> injectListingButtons({
   List<String> savedWorkIds = const [],
 }) async {
   final savedIdsJson = jsonEncode(savedWorkIds);
-  final js = """
+  final js =
+      """
 (function(){
   try {
     var DEBUG = true;
@@ -131,7 +132,7 @@ Future<void> injectListingButtons({
       
       // Set initial text and style based on saved status
       if (isSaved) {
-        btn.textContent='✓ Saved';
+        btn.textContent='Saved';
         btn.style.cssText = [
           'display:inline-block',
           'margin-left:12px',
@@ -194,35 +195,70 @@ Future<void> injectListingButtons({
         btn.style.opacity='0.8';
         btn.style.pointerEvents='none';
         saveWorkById(id).then(function(meta){
+          // Notify app with the metadata - app will show category dialog
           notifyApp({ type:'saveWorkFromListing', workId:id, meta: meta });
-          btn.textContent='Saved!';
-          btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
-          btn.style.borderColor='#040';
-          // Apply darkening to the work item after save
-          li.style.backgroundColor = 'rgba(0, 0, 0, 0.08)';
-          li.style.opacity = '0.85';
-          // Add to saved set
-          if (window.__fb_savedWorkIds) window.__fb_savedWorkIds.add(id);
+          // Show "Select..." while waiting for user to pick categories
+          btn.textContent='Select...';
+          btn.style.background='linear-gradient(135deg, #666 0%, #888 100%)';
+          btn.style.borderColor='#444';
+          btn.style.opacity='1';
+          btn.style.pointerEvents='none';
+          // Store the button and li references for later confirmation/cancellation
+          if (!window.__fb_pending_saves) window.__fb_pending_saves = {};
+          window.__fb_pending_saves[id] = { btn: btn, li: li };
         }).catch(function(err){
           log('error', 'save error', id + ' ' + String(err));
           notifyApp({ type:'saveWorkError', workId:id, error: String(err) });
           btn.textContent='Error';
           btn.style.background='linear-gradient(135deg, #555 0%, #777 100%)';
           btn.style.borderColor='#333';
-        }).finally(function(){
           btn.style.opacity='1';
           btn.style.pointerEvents='auto';
-          setTimeout(function(){ 
-            // After animation, show as saved
-            btn.textContent='✓ Saved';
-            btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
-            btn.style.borderColor='#040';
-            btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #080 0%, #0b0 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#060'; };
-            btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#040'; };
-          }, 2500);
         });
       });
     }
+
+    // Function to confirm a save (called from app after user selects categories)
+    window.__fb_confirmSave = function(id) {
+      log('info', 'save confirmed', id);
+      var pending = window.__fb_pending_saves && window.__fb_pending_saves[id];
+      if (!pending) return;
+      var btn = pending.btn;
+      var li = pending.li;
+      
+      btn.textContent='✓ Saved';
+      btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)';
+      btn.style.borderColor='#040';
+      btn.style.pointerEvents='auto';
+      // Apply darkening to the work item
+      li.style.backgroundColor = 'rgba(0, 0, 0, 0.08)';
+      li.style.opacity = '0.85';
+      // Update hover handlers
+      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #080 0%, #0b0 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#060'; };
+      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #060 0%, #090 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#040'; };
+      // Add to saved set
+      if (window.__fb_savedWorkIds) window.__fb_savedWorkIds.add(id);
+      // Clean up
+      delete window.__fb_pending_saves[id];
+    };
+    
+    // Function to cancel a save (called from app if user cancels dialog)
+    window.__fb_cancelSave = function(id) {
+      log('info', 'save cancelled', id);
+      var pending = window.__fb_pending_saves && window.__fb_pending_saves[id];
+      if (!pending) return;
+      var btn = pending.btn;
+      
+      // Reset to Save button
+      btn.textContent='Save';
+      btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)';
+      btn.style.borderColor='#700';
+      btn.style.pointerEvents='auto';
+      btn.onmouseover = function(){ btn.style.background='linear-gradient(135deg, #a00 0%, #e00 100%)'; btn.style.boxShadow='0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3)'; btn.style.transform='translateY(-2px)'; btn.style.borderColor='#900'; };
+      btn.onmouseout = function(){ btn.style.background='linear-gradient(135deg, #900 0%, #c00 100%)'; btn.style.boxShadow='0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)'; btn.style.transform='translateY(0)'; btn.style.borderColor='#700'; };
+      // Clean up
+      delete window.__fb_pending_saves[id];
+    };
 
     function run(){
       var lists = document.querySelectorAll('ol.work.index.group, ol.index.group');

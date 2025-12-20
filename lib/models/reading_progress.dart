@@ -21,6 +21,10 @@ class ReadingProgress {
   @HiveField(5)
   final String? chapterName;
 
+  /// First visible paragraph text (up to 200 chars) for cross-format position matching
+  @HiveField(6)
+  final String? paragraphAnchor;
+
   ReadingProgress({
     required this.chapterIndex,
     this.chapterAnchor,
@@ -28,10 +32,11 @@ class ReadingProgress {
     required this.scrollPosition,
     this.isCompleted = false,
     this.chapterName,
+    this.paragraphAnchor,
   });
 
   factory ReadingProgress.empty() =>
-      ReadingProgress(chapterIndex: 0, scrollPosition: 0.0, isCompleted: false, chapterName: null);
+      ReadingProgress(chapterIndex: 0, scrollPosition: 0.0, isCompleted: false, chapterName: null, paragraphAnchor: null);
 
   Map<String, dynamic> toJson() => {
     'chapterIndex': chapterIndex,
@@ -40,6 +45,7 @@ class ReadingProgress {
     'scrollPosition': scrollPosition,
     'isCompleted': isCompleted,
     'chapterName': chapterName,
+    'paragraphAnchor': paragraphAnchor,
   };
 
   factory ReadingProgress.fromJson(Map<String, dynamic> json) =>
@@ -52,6 +58,7 @@ class ReadingProgress {
         scrollPosition: (json['scrollPosition'] ?? 0.0).toDouble(),
         isCompleted: json['isCompleted'] ?? false,
         chapterName: json['chapterName'],
+        paragraphAnchor: json['paragraphAnchor'],
       );
 
   ReadingProgress copyWith({
@@ -61,6 +68,7 @@ class ReadingProgress {
     double? scrollPosition,
     bool? isCompleted,
     String? chapterName,
+    String? paragraphAnchor,
   }) {
     return ReadingProgress(
       chapterIndex: chapterIndex ?? this.chapterIndex,
@@ -69,8 +77,9 @@ class ReadingProgress {
       scrollPosition: scrollPosition ?? this.scrollPosition,
       isCompleted: isCompleted ?? this.isCompleted,
       chapterName: chapterName ?? this.chapterName,
+      paragraphAnchor: paragraphAnchor ?? this.paragraphAnchor,
     );
   }
 
-  bool get hasProgress => chapterIndex > 0 || scrollPosition > 0.0;
+  bool get hasProgress => chapterIndex > 0 || scrollPosition > 0.0 || (paragraphAnchor != null && paragraphAnchor!.isNotEmpty);
 }

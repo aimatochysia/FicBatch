@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/sync_service.dart';
@@ -23,13 +24,95 @@ final unreadCountProvider = FutureProvider<int>((ref) async {
   return updates.where((u) => !u.isRead).length;
 });
 
-class UpdatesTab extends ConsumerWidget {
+class UpdatesTab extends ConsumerStatefulWidget {
   const UpdatesTab({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final updatesAsync = ref.watch(workUpdatesProvider);
+  ConsumerState<UpdatesTab> createState() => _UpdatesTabState();
+}
+
+class _UpdatesTabState extends ConsumerState<UpdatesTab> {
+  bool _isSyncing = false;
+  
+  Future<void> _performSync() async {
+    if (_isSyncing) return;
     
+    setState(() => _isSyncing = true);
+    
+    try {
+      final syncService = SyncService();
+      final updates = await syncService.performSync();
+      ref.invalidate(workUpdatesProvider);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(updates.isEmpty 
+                ? 'No new updates found' 
+                : 'Found ${updates.length} update(s)'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sync failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final updatesAsync = ref.watch(workUpdatesProvider);
+    final isMobile = Platform.isAndroid || Platform.isIOS;
+    
+    Widget buildUpdatesList(List<WorkUpdate> updates) {
+      if (updates.isEmpty) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.check_circle_outline,
+                size: 64,
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No updates',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Works in your library will appear here when updated',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      }
+      
+      return ListView.builder(
+        itemCount: updates.length,
+        itemBuilder: (context, index) {
+          final update = updates[index];
+          return _UpdateTile(update: update);
+        },
+      );
+    }
+
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -44,13 +127,25 @@ class UpdatesTab extends ConsumerWidget {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
+                // Sync now button
+                IconButton(
+                  icon: _isSyncing 
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sync),
+                  tooltip: 'Sync now',
+                  onPressed: _isSyncing ? null : _performSync,
+                ),
                 // Clear all button
                 updatesAsync.when(
                   data: (updates) => updates.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear_all),
                           tooltip: 'Clear all updates',
-                          onPressed: () => _showClearDialog(context, ref),
+                          onPressed: () => _showClearDialog(context),
                         )
                       : const SizedBox.shrink(),
                   loading: () => const SizedBox.shrink(),
@@ -60,51 +155,19 @@ class UpdatesTab extends ConsumerWidget {
             ),
           ),
           
-          // Updates list
+          // Updates list with pull-to-refresh for mobile
           Expanded(
             child: updatesAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Error: $e')),
               data: (updates) {
-                if (updates.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.check_circle_outline,
-                          size: 64,
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No updates',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Works in your library will appear here when updated',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
+                if (isMobile) {
+                  return RefreshIndicator(
+                    onRefresh: _performSync,
+                    child: buildUpdatesList(updates),
                   );
                 }
-                
-                return ListView.builder(
-                  itemCount: updates.length,
-                  itemBuilder: (context, index) {
-                    final update = updates[index];
-                    return _UpdateTile(update: update);
-                  },
-                );
+                return buildUpdatesList(updates);
               },
             ),
           ),
@@ -113,7 +176,7 @@ class UpdatesTab extends ConsumerWidget {
     );
   }
 
-  Future<void> _showClearDialog(BuildContext context, WidgetRef ref) async {
+  Future<void> _showClearDialog(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

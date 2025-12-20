@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 
 class BrowseToolbar extends StatelessWidget {
@@ -17,6 +18,9 @@ class BrowseToolbar extends StatelessWidget {
   static const double _compactButtonSize = 32;
   static const double _compactIconSize = 18;
   static const double _compactTextFieldHeight = 36;
+  
+  // Check if running on mobile platform (Android/iOS)
+  static bool get _isMobile => Platform.isAndroid || Platform.isIOS;
 
   const BrowseToolbar({
     super.key,
@@ -41,9 +45,12 @@ class BrowseToolbar extends StatelessWidget {
         
         return Row(
           children: [
-            // Compact navigation cluster (like mobile browser)
-            _buildNavigationButtons(context, isCompact),
-            SizedBox(width: isCompact ? 2 : 8),
+            // Navigation buttons - hidden on mobile (Android/iOS)
+            // Users can use platform's native back gestures or pull-to-refresh
+            if (!_isMobile) ...[
+              _buildNavigationButtons(context, isCompact),
+              SizedBox(width: isCompact ? 2 : 8),
+            ],
             
             // Search bar
             Expanded(
@@ -67,10 +74,7 @@ class BrowseToolbar extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(width: isCompact ? 2 : 8),
-            
-            // Save to library button
-            _buildSaveToLibraryButton(isCompact),
+            // Save to library button removed - works are saved via injected buttons on listing pages
           ],
         );
       },
