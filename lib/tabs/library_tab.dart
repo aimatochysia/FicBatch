@@ -648,7 +648,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
   Future<void> _showCategoryLongPressMenu(BuildContext context, String category) async {
     // Get works for this category
     final storage = ref.read(storageProvider);
-    final ids = await storage.getWorksInCategory(category);
+    final ids = await storage.getWorkIdsForCategory(category);
     final allWorks = await storage.getAllWorks();
     final works = allWorks.where((w) => ids.contains(w.id)).toList();
     
