@@ -118,7 +118,7 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
       
       // Initialize Windows sync timer if auto-sync was enabled
       if (Platform.isWindows && state.autoSyncEnabled) {
-        _startWindowsSyncTimer(state.interval, state.networkPreference);
+        WindowsSyncManager().startSync(state.interval, state.networkPreference);
       }
     } catch (e) {
       debugPrint('Error loading sync settings: $e');
@@ -132,9 +132,9 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     if (Platform.isWindows) {
       // Use Windows in-app timer
       if (enabled) {
-        _startWindowsSyncTimer(state.interval, state.networkPreference);
+        WindowsSyncManager().startSync(state.interval, state.networkPreference);
       } else {
-        _stopWindowsSyncTimer();
+        WindowsSyncManager().stopSync();
       }
     } else {
       // Use Workmanager for mobile
@@ -155,7 +155,7 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     
     if (state.autoSyncEnabled) {
       if (Platform.isWindows) {
-        _startWindowsSyncTimer(interval, state.networkPreference);
+        WindowsSyncManager().startSync(interval, state.networkPreference);
       } else {
         await SyncService.scheduleSync(
           interval: interval,
@@ -171,7 +171,7 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     
     if (state.autoSyncEnabled) {
       if (Platform.isWindows) {
-        _startWindowsSyncTimer(state.interval, preference);
+        WindowsSyncManager().startSync(state.interval, preference);
       } else {
         await SyncService.scheduleSync(
           interval: state.interval,
@@ -193,32 +193,40 @@ class SettingsTab extends ConsumerStatefulWidget {
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
 }
 
-/// Windows in-app sync timer (since Workmanager doesn't work on Windows)
-Timer? _windowsSyncTimer;
-
-void _startWindowsSyncTimer(SyncInterval interval, SyncNetworkPreference networkPreference) {
-  _windowsSyncTimer?.cancel();
-  if (!Platform.isWindows) return;
+/// Windows in-app sync manager (singleton pattern since Workmanager doesn't work on Windows)
+class WindowsSyncManager {
+  static final WindowsSyncManager _instance = WindowsSyncManager._internal();
+  factory WindowsSyncManager() => _instance;
+  WindowsSyncManager._internal();
   
-  _windowsSyncTimer = Timer.periodic(Duration(hours: interval.hours), (timer) async {
-    debugPrint('[WindowsSync] Running scheduled sync...');
-    try {
-      final syncService = SyncService();
-      final canSync = await syncService.canSyncWithCurrentNetwork(networkPreference);
-      if (canSync) {
-        await syncService.performSync();
+  Timer? _syncTimer;
+  
+  void startSync(SyncInterval interval, SyncNetworkPreference networkPreference) {
+    _syncTimer?.cancel();
+    if (!Platform.isWindows) return;
+    
+    _syncTimer = Timer.periodic(Duration(hours: interval.hours), (timer) async {
+      debugPrint('[WindowsSync] Running scheduled sync...');
+      try {
+        final syncService = SyncService();
+        final canSync = await syncService.canSyncWithCurrentNetwork(networkPreference);
+        if (canSync) {
+          await syncService.performSync();
+        }
+      } catch (e) {
+        debugPrint('[WindowsSync] Sync error: $e');
       }
-    } catch (e) {
-      debugPrint('[WindowsSync] Sync error: $e');
-    }
-  });
-  debugPrint('[WindowsSync] Started timer for every ${interval.hours} hours');
-}
-
-void _stopWindowsSyncTimer() {
-  _windowsSyncTimer?.cancel();
-  _windowsSyncTimer = null;
-  debugPrint('[WindowsSync] Stopped timer');
+    });
+    debugPrint('[WindowsSync] Started timer for every ${interval.hours} hours');
+  }
+  
+  void stopSync() {
+    _syncTimer?.cancel();
+    _syncTimer = null;
+    debugPrint('[WindowsSync] Stopped timer');
+  }
+  
+  bool get isRunning => _syncTimer != null && _syncTimer!.isActive;
 }
 
 class _SettingsTabState extends ConsumerState<SettingsTab> {

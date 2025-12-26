@@ -369,8 +369,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (offlineContent != null) {
       // Load offline content - Windows webview can load from file URL
       final filePath = await DownloadService.getWorkDownloadPath(widget.work.id);
-      await _winController!.loadUrl('file:///$filePath');
-      debugPrint('[ReaderScreen] Windows: Loaded offline content from file');
+      // Use Uri.file for proper cross-platform file URL generation
+      final fileUrl = Uri.file(filePath).toString();
+      await _winController!.loadUrl(fileUrl);
+      debugPrint('[ReaderScreen] Windows: Loaded offline content from $fileUrl');
     } else {
       // Load online content
       await _winController!.loadUrl(
