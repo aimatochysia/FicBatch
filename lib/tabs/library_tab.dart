@@ -7,7 +7,7 @@ import '../services/download_service.dart';
 import '../services/library_export_service.dart';
 import '../models/work.dart';
 import 'reader_screen.dart';
-import 'settings_tab.dart';
+import 'settings_tab.dart' show libraryGridColumnsProvider, libraryViewModeProvider, LibraryViewMode;
 
 class LibraryTab extends ConsumerStatefulWidget {
   const LibraryTab({super.key});
@@ -598,7 +598,16 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                   TabBar(
                     isScrollable: true,
                     labelPadding: const EdgeInsets.symmetric(horizontal: 12),
-                    tabs: tabs.map((c) => Tab(text: c)).toList(),
+                    tabs: tabs.map((c) {
+                      // Wrap each tab in a GestureDetector for long-press download
+                      return GestureDetector(
+                        onLongPress: c == 'All' ? null : () {
+                          // Get works for this category and show download dialog
+                          _showCategoryLongPressMenu(context, c);
+                        },
+                        child: Tab(text: c),
+                      );
+                    }).toList(),
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -635,6 +644,44 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
       ),
     );
   }
+  
+  Future<void> _showCategoryLongPressMenu(BuildContext context, String category) async {
+    // Get works for this category
+    final storage = ref.read(storageProvider);
+    final ids = await storage.getWorksInCategory(category);
+    final allWorks = await storage.getAllWorks();
+    final works = allWorks.where((w) => ids.contains(w.id)).toList();
+    
+    if (!context.mounted) return;
+    
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.download),
+              title: Text('Download All (${works.length})'),
+              subtitle: Text('Download all works in "$category"'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _downloadCategory(category, works);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Category Options'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showCategoryOptionsDialog(category, works);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildCategoryContent(String category, List<Work> works, List<Work> allWorks) {
     return Column(
@@ -667,6 +714,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
   Widget _grid(List works) {
     // Get the grid columns setting
     final settingsColumns = ref.watch(libraryGridColumnsProvider);
+    final viewMode = ref.watch(libraryViewModeProvider);
     
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -679,95 +727,264 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
             : settingsColumns;
         final childAspectRatio = isCompact ? 0.8 : 0.7;
         
+        // Use list view mode
+        if (viewMode == LibraryViewMode.list) {
+          return ListView.builder(
+            itemCount: works.length,
+            itemBuilder: (context, i) => _buildWorkListItem(context, works[i], isCompact),
+          );
+        }
+        
+        // Grid view mode (default)
         return GridView.builder(
           itemCount: works.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
             childAspectRatio: childAspectRatio,
           ),
-          itemBuilder: (context, i) {
-            final w = works[i];
-            return Card(
-              child: InkWell(
-                onTap: () async {
-                  // Add to history
-                  final storage = ref.read(storageProvider);
-                  await storage.addToHistory(
-                    workId: w.id,
-                    title: w.title,
-                    author: w.author,
-                  );
-                  
-                  if (context.mounted) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ReaderScreen(work: w),
-                      ),
-                    );
-                  }
-                },
-                // Long press to edit categories (alternative for compact mode)
-                onLongPress: () => _editCategoriesForWork(context, w.id),
-                child: Padding(
-                  padding: EdgeInsets.all(isCompact ? 6.0 : 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        w.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: isCompact ? 13 : 14,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'by ${w.author}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: isCompact ? 11 : 12),
-                      ),
-                      const SizedBox(height: 4),
-                      if ((w.summary ?? '').isNotEmpty)
-                        Text(
-                          w.summary!,
-                          maxLines: isCompact ? 2 : 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: isCompact ? 10 : 12),
-                        ),
-                      const Spacer(),
-                      // Hide action buttons on compact screens (use long press instead)
-                      if (!isCompact)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            // Download button
-                            IconButton(
-                              onPressed: _isDownloading ? null : () => _downloadWork(w),
-                              icon: Icon(
-                                w.isDownloaded ? Icons.download_done : Icons.download,
-                                color: w.isDownloaded ? Colors.green : null,
-                              ),
-                              tooltip: w.isDownloaded ? 'Downloaded' : 'Download',
-                            ),
-                            IconButton(
-                              onPressed: () => _editCategoriesForWork(context, w.id),
-                              icon: const Icon(Icons.folder_open),
-                              tooltip: 'Edit Categories',
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
+          itemBuilder: (context, i) => _buildWorkGridItem(context, works[i], isCompact),
         );
       },
+    );
+  }
+  
+  /// Show context menu for long-press on work card
+  Future<void> _showWorkContextMenu(BuildContext context, Work work) async {
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                work.isDownloaded ? Icons.download_done : Icons.download,
+                color: work.isDownloaded ? Colors.green : null,
+              ),
+              title: Text(work.isDownloaded ? 'Re-download' : 'Download'),
+              subtitle: work.isDownloaded 
+                  ? const Text('Work is already downloaded') 
+                  : const Text('Download for offline reading'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _downloadWork(work);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('Edit Categories'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _editCategoriesForWork(context, work.id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Remove from Library'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx2) => AlertDialog(
+                    title: const Text('Remove Work'),
+                    content: Text('Remove "${work.title}" from your library?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx2, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx2, true),
+                        child: const Text('Remove'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true && context.mounted) {
+                  final storage = ref.read(storageProvider);
+                  await storage.deleteWork(work.id);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Removed "${work.title}"')),
+                    );
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  /// Build a work card for grid view
+  Widget _buildWorkGridItem(BuildContext context, Work w, bool isCompact) {
+    return Card(
+      child: InkWell(
+        onTap: () async {
+          // Add to history
+          final storage = ref.read(storageProvider);
+          await storage.addToHistory(
+            workId: w.id,
+            title: w.title,
+            author: w.author,
+          );
+          
+          if (context.mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ReaderScreen(work: w),
+              ),
+            );
+          }
+        },
+        // Long press to show context menu (works on all screens including mobile)
+        onLongPress: () => _showWorkContextMenu(context, w),
+        child: Padding(
+          padding: EdgeInsets.all(isCompact ? 6.0 : 8.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      w.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: isCompact ? 13 : 14,
+                      ),
+                    ),
+                  ),
+                  // Download indicator (always visible)
+                  if (w.isDownloaded)
+                    const Icon(Icons.download_done, size: 16, color: Colors.green),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'by ${w.author}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: isCompact ? 11 : 12),
+              ),
+              const SizedBox(height: 4),
+              if ((w.summary ?? '').isNotEmpty)
+                Text(
+                  w.summary!,
+                  maxLines: isCompact ? 2 : 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: isCompact ? 10 : 12),
+                ),
+              const Spacer(),
+              // Action buttons on larger screens
+              if (!isCompact)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Download button
+                    IconButton(
+                      onPressed: _isDownloading ? null : () => _downloadWork(w),
+                      icon: Icon(
+                        w.isDownloaded ? Icons.download_done : Icons.download,
+                        color: w.isDownloaded ? Colors.green : null,
+                      ),
+                      tooltip: w.isDownloaded ? 'Downloaded' : 'Download',
+                    ),
+                    IconButton(
+                      onPressed: () => _editCategoriesForWork(context, w.id),
+                      icon: const Icon(Icons.folder_open),
+                      tooltip: 'Edit Categories',
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// Build a work item for list view
+  Widget _buildWorkListItem(BuildContext context, Work w, bool isCompact) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: InkWell(
+        onTap: () async {
+          // Add to history
+          final storage = ref.read(storageProvider);
+          await storage.addToHistory(
+            workId: w.id,
+            title: w.title,
+            author: w.author,
+          );
+          
+          if (context.mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ReaderScreen(work: w),
+              ),
+            );
+          }
+        },
+        // Long press to show context menu
+        onLongPress: () => _showWorkContextMenu(context, w),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              // Download status indicator
+              if (w.isDownloaded)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.download_done, size: 18, color: Colors.green),
+                ),
+              // Work info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      w.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'by ${w.author}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color),
+                    ),
+                  ],
+                ),
+              ),
+              // Word count
+              if (w.wordsCount != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    '${w.wordsCount} words',
+                    style: TextStyle(fontSize: 11, color: Theme.of(context).textTheme.bodySmall?.color),
+                  ),
+                ),
+              // More options button
+              IconButton(
+                onPressed: () => _showWorkContextMenu(context, w),
+                icon: const Icon(Icons.more_vert, size: 20),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

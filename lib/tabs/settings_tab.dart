@@ -62,6 +62,37 @@ class LibraryGridColumnsNotifier extends StateNotifier<int> {
   }
 }
 
+/// Library view mode (grid or list)
+enum LibraryViewMode {
+  grid('Grid', 'Display works as cards in a grid'),
+  list('List', 'Display works in a compact list');
+
+  final String label;
+  final String description;
+  const LibraryViewMode(this.label, this.description);
+}
+
+/// Provider for library view mode setting (grid vs list)
+final libraryViewModeProvider = StateNotifierProvider<LibraryViewModeNotifier, LibraryViewMode>((ref) {
+  final storage = ref.watch(storageProvider);
+  final savedIndex = storage.settingsBox.get('library_view_mode', defaultValue: 0);
+  final index = (savedIndex is int && savedIndex >= 0 && savedIndex < LibraryViewMode.values.length) 
+      ? savedIndex 
+      : 0;
+  return LibraryViewModeNotifier(LibraryViewMode.values[index], storage);
+});
+
+class LibraryViewModeNotifier extends StateNotifier<LibraryViewMode> {
+  final dynamic _storage;
+  
+  LibraryViewModeNotifier(super.state, this._storage);
+  
+  Future<void> setMode(LibraryViewMode mode) async {
+    state = mode;
+    await _storage.settingsBox.put('library_view_mode', mode.index);
+  }
+}
+
 /// Provider for sync settings
 final syncSettingsProvider = StateNotifierProvider<SyncSettingsNotifier, SyncSettings>((ref) {
   final storage = ref.watch(storageProvider);
@@ -527,6 +558,8 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final themeNotifier = ref.read(themeProvider.notifier);
     final gridColumns = ref.watch(libraryGridColumnsProvider);
     final gridNotifier = ref.read(libraryGridColumnsProvider.notifier);
+    final viewMode = ref.watch(libraryViewModeProvider);
+    final viewModeNotifier = ref.read(libraryViewModeProvider.notifier);
     final syncSettings = ref.watch(syncSettingsProvider);
     final syncNotifier = ref.read(syncSettingsProvider.notifier);
 
@@ -557,11 +590,34 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             
             const Divider(),
             
-            // Library Grid Size
+            // Library View Mode (Grid vs List)
             ListTile(
-              leading: const Icon(Icons.grid_view),
-              title: const Text('Library Grid Columns'),
-              subtitle: Text('$gridColumns columns'),
+              leading: Icon(viewMode == LibraryViewMode.grid ? Icons.grid_view : Icons.list),
+              title: const Text('Library View Mode'),
+              subtitle: Text(viewMode.label),
+              trailing: PopupMenuButton<LibraryViewMode>(
+                onSelected: viewModeNotifier.setMode,
+                itemBuilder: (context) => LibraryViewMode.values
+                    .map((mode) => PopupMenuItem(
+                          value: mode,
+                          child: Row(
+                            children: [
+                              Icon(mode == LibraryViewMode.grid ? Icons.grid_view : Icons.list, size: 20),
+                              const SizedBox(width: 8),
+                              Text(mode.label),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+            
+            // Library Grid Size (only show when in grid mode)
+            if (viewMode == LibraryViewMode.grid)
+              ListTile(
+                leading: const Icon(Icons.grid_on),
+                title: const Text('Library Grid Columns'),
+                subtitle: Text('$gridColumns columns'),
               trailing: PopupMenuButton<int>(
                 onSelected: gridNotifier.setColumns,
                 itemBuilder: (context) => [
