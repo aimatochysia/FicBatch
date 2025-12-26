@@ -525,11 +525,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             // AO3 uses 1-indexed chapter IDs (chapter-1, chapter-2, etc.)
             // Use heading.id if available, otherwise use 1-indexed fallback
             const chapterNum = chapterIndex + 1;
+            const anchorId = heading.id || ('fb-chapter-' + chapterNum);
+            
+            // Ensure heading has an ID for scrolling
+            if (!heading.id) heading.id = anchorId;
             
             chapters.push({
               index: chapterIndex,
               title: fullTitle,
-              anchor: heading.id || ('chapter-' + chapterNum)
+              anchor: anchorId
             });
             chapterIndex++;
           }
@@ -543,11 +547,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             // Match "Chapter X" or "Chapter X: Title" pattern
             if (/^Chapter\\s+\\d+/i.test(text)) {
               const chapterNum = chapterIndex + 1;
+              const anchorId = heading.id || ('fb-chapter-' + chapterNum);
+              
+              // Assign ID to heading if it doesn't have one (for scrolling)
+              if (!heading.id) heading.id = anchorId;
               
               chapters.push({
                 index: chapterIndex,
                 title: text,
-                anchor: heading.id || ('chapter-' + chapterNum)
+                anchor: anchorId
               });
               chapterIndex++;
             }
@@ -696,13 +704,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _applyFontSize() async {
     if (_controller == null && _winController == null) return;
 
+    // Apply font size to both online (#workskin) and offline (body) content
     final js = '''
       (function() {
         const style = document.createElement('style');
+        style.id = '__fb_font_size_style';
+        
+        // Remove previous font size style if exists
+        const existingStyle = document.getElementById('__fb_font_size_style');
+        if (existingStyle) existingStyle.remove();
+        
         style.textContent = \`
+          /* Online AO3 content */
           #workskin {
             font-size: ${_fontSize}px !important;
           }
+          /* Offline/downloaded content - apply to body and common text elements */
+          body {
+            font-size: ${_fontSize}px !important;
+          }
+          p, div, span, li, blockquote, .userstuff {
+            font-size: ${_fontSize}px !important;
+          }
+          /* Chapter headings should be larger */
+          h1 { font-size: ${_fontSize * 1.5}px !important; }
+          h2 { font-size: ${_fontSize * 1.3}px !important; }
+          h3 { font-size: ${_fontSize * 1.15}px !important; }
         \`;
         document.head.appendChild(style);
       })();
