@@ -504,13 +504,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _extractChapters() async {
     if (_controller == null && _winController == null) return;
 
-    const js = '''
+    // This handles both online and offline/downloaded HTML formats:
+    // Online: <h3 class="title"><a>Chapter 2</a>: Stranger</h3>
+    // Offline: <h2>Chapter 2: Stranger</h2>
+    final js = '''
       (function() {
         const chapters = [];
-        const chapterHeadings = document.querySelectorAll('h3.title');
         let chapterIndex = 0;
         
-        chapterHeadings.forEach((heading) => {
+        // First try online format: h3.title with links
+        const onlineHeadings = document.querySelectorAll('h3.title');
+        onlineHeadings.forEach((heading) => {
           const link = heading.querySelector('a');
           // Only include if the link points to a chapter (contains /chapters/)
           if (link && link.href && link.href.includes('/chapters/')) {
@@ -530,6 +534,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             chapterIndex++;
           }
         });
+        
+        // If no chapters found, try offline/downloaded format: h2 with chapter pattern
+        if (chapters.length === 0) {
+          const offlineHeadings = document.querySelectorAll('h2');
+          offlineHeadings.forEach((heading) => {
+            const text = heading.textContent.trim().replace(/\\s+/g, ' ');
+            // Match "Chapter X" or "Chapter X: Title" pattern
+            if (/^Chapter\\s+\\d+/i.test(text)) {
+              const chapterNum = chapterIndex + 1;
+              
+              chapters.push({
+                index: chapterIndex,
+                title: text,
+                anchor: heading.id || ('chapter-' + chapterNum)
+              });
+              chapterIndex++;
+            }
+          });
+        }
+        
         return JSON.stringify(chapters);
       })();
     ''';
@@ -745,21 +769,78 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         _currentScrollPosition = progress.scrollPosition;
       });
 
-      // Jump to saved position
-      if (progress.chapterAnchor != null && progress.chapterAnchor!.isNotEmpty) {
+      // Try to match chapter by name first (works across online/offline formats)
+      // Then fall back to anchor-based or index-based matching
+      if (progress.chapterName != null && progress.chapterName!.isNotEmpty) {
+        // Find matching chapter by name in current chapter list
+        int matchedIndex = -1;
+        for (int i = 0; i < _chapters.length; i++) {
+          // Extract chapter number from both saved and current chapter names
+          final savedMatch = RegExp(r'Chapter\s+(\d+)', caseSensitive: false)
+              .firstMatch(progress.chapterName!);
+          final currentMatch = RegExp(r'Chapter\s+(\d+)', caseSensitive: false)
+              .firstMatch(_chapters[i].title);
+          
+          if (savedMatch != null && currentMatch != null &&
+              savedMatch.group(1) == currentMatch.group(1)) {
+            matchedIndex = i;
+            break;
+          }
+          
+          // Also try exact title match
+          if (_chapters[i].title == progress.chapterName) {
+            matchedIndex = i;
+            break;
+          }
+        }
+        
+        if (matchedIndex >= 0) {
+          await _jumpToChapter(matchedIndex);
+          setState(() => _currentChapterIndex = matchedIndex);
+        } else if (progress.chapterIndex < _chapters.length) {
+          // Fall back to index if name matching failed
+          await _jumpToChapter(progress.chapterIndex);
+        }
+      } else if (progress.chapterAnchor != null && progress.chapterAnchor!.isNotEmpty) {
         await _jumpToChapter(progress.chapterIndex);
       }
 
-      // Scroll to saved position
-      final js = 'window.scrollTo(0, ${progress.scrollPosition});';
-      try {
-        if (_isWindows && _winController != null) {
-          await _winController!.executeScript(js);
-        } else if (_controller != null) {
-          await _controller!.runJavaScript(js);
+      // After jumping to chapter, apply relative scroll within that chapter section
+      // Calculate scroll as percentage for font-size independence
+      if (progress.scrollPosition > 0) {
+        final scrollPercentage = progress.scrollPosition;
+        // Note: We store percentage (0-1) when possible for font-size independence
+        // For backward compatibility, if value > 1, treat as absolute pixels
+        if (scrollPercentage <= 1.0 && scrollPercentage > 0) {
+          // Percentage-based scroll
+          final js = '''
+            (function() {
+              const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+              window.scrollTo(0, maxScroll * $scrollPercentage);
+            })();
+          ''';
+          try {
+            if (_isWindows && _winController != null) {
+              await _winController!.executeScript(js);
+            } else if (_controller != null) {
+              await _controller!.runJavaScript(js);
+            }
+          } catch (e) {
+            debugPrint('Error restoring percentage scroll: $e');
+          }
+        } else {
+          // Absolute pixel scroll (legacy)
+          final js = 'window.scrollTo(0, ${progress.scrollPosition});';
+          try {
+            if (_isWindows && _winController != null) {
+              await _winController!.executeScript(js);
+            } else if (_controller != null) {
+              await _controller!.runJavaScript(js);
+            }
+          } catch (e) {
+            debugPrint('Error restoring scroll position: $e');
+          }
         }
-      } catch (e) {
-        debugPrint('Error restoring scroll position: $e');
       }
     }
 
@@ -818,10 +899,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final position = (data['position'] ?? 0).toDouble();
         final maxScroll = (data['maxScroll'] ?? 1).toDouble();
         
+        // Store as percentage (0-1) for font-size independence
+        final scrollPercentage = maxScroll > 0 ? position / maxScroll : 0.0;
+        
         setState(() {
-          _currentScrollPosition = position;
+          _currentScrollPosition = scrollPercentage.clamp(0.0, 1.0);
           _hasUnsavedChanges = true;
         });
+        
+        // Update chapter index
+        await _updateCurrentChapterIndex();
 
         // Check if completed
         if (maxScroll > 0 && position >= maxScroll * 0.95) {
@@ -839,14 +926,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       if (data['type'] == 'scroll') {
         final position = (data['position'] ?? 0).toDouble();
         final maxScroll = (data['maxScroll'] ?? 1).toDouble();
+        
+        // Store as percentage (0-1) for font-size independence
+        final scrollPercentage = maxScroll > 0 ? position / maxScroll : 0.0;
 
         setState(() {
-          _currentScrollPosition = position;
+          _currentScrollPosition = scrollPercentage.clamp(0.0, 1.0);
           _hasUnsavedChanges = true;
         });
 
         // Update chapter index based on position
-        _updateCurrentChapterIndex();
+        await _updateCurrentChapterIndex();
 
         // Check if completed
         if (maxScroll > 0 && position >= maxScroll * 0.95) {
@@ -865,9 +955,57 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
-  void _updateCurrentChapterIndex() {
-    // TODO: Implement proper chapter index detection based on scroll position
-    // For now, keep the current index
+  Future<void> _updateCurrentChapterIndex() async {
+    if (_chapters.isEmpty || (_controller == null && _winController == null)) return;
+    
+    // Get current visible chapter by checking which chapter heading is closest to viewport top
+    final js = '''
+      (function() {
+        const headings = document.querySelectorAll('h2, h3.title');
+        const viewportTop = window.pageYOffset;
+        let closestHeading = null;
+        let closestIndex = 0;
+        let closestDistance = Infinity;
+        
+        let chapterIndex = 0;
+        for (let h of headings) {
+          const text = h.textContent.trim();
+          // Only count chapter headings
+          if (/Chapter\\s+\\d+/i.test(text) || (h.tagName === 'H3' && h.classList.contains('title'))) {
+            const rect = h.getBoundingClientRect();
+            const absTop = rect.top + window.pageYOffset;
+            const distance = Math.abs(absTop - viewportTop);
+            
+            // If heading is above or at viewport, it's the current chapter
+            if (absTop <= viewportTop + 100) {
+              closestHeading = h;
+              closestIndex = chapterIndex;
+            }
+            chapterIndex++;
+          }
+        }
+        
+        return closestIndex;
+      })();
+    ''';
+    
+    try {
+      dynamic result;
+      if (_isWindows && _winController != null) {
+        result = await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        result = await _controller!.runJavaScriptReturningResult(js);
+      }
+      
+      if (result != null) {
+        final index = int.tryParse(result.toString()) ?? 0;
+        if (index >= 0 && index < _chapters.length && index != _currentChapterIndex) {
+          setState(() => _currentChapterIndex = index);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error updating chapter index: $e');
+    }
   }
 
   Future<void> _saveProgress() async {
@@ -945,12 +1083,46 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if ((_controller == null && _winController == null) || index >= _chapters.length) return;
 
     final chapter = _chapters[index];
+    // Use both anchor-based and title-based lookup for cross-format compatibility
+    final escapedTitle = chapter.title.replaceAll("'", "\\'").replaceAll('"', '\\"');
     final js = '''
       (function() {
-        const element = document.getElementById('${chapter.anchor}');
+        // Try by ID first
+        let element = document.getElementById('${chapter.anchor}');
+        
+        // If not found, try finding by chapter title text in h2 or h3
+        if (!element) {
+          const headings = document.querySelectorAll('h2, h3.title');
+          for (let h of headings) {
+            const text = h.textContent.trim().replace(/\\s+/g, ' ');
+            if (text === '$escapedTitle' || text.includes('$escapedTitle')) {
+              element = h;
+              break;
+            }
+          }
+        }
+        
+        // If still not found, try matching just chapter number pattern
+        if (!element) {
+          const chapterMatch = '$escapedTitle'.match(/Chapter\\s+(\\d+)/i);
+          if (chapterMatch) {
+            const chapterNum = chapterMatch[1];
+            const headings = document.querySelectorAll('h2, h3.title');
+            for (let h of headings) {
+              const text = h.textContent.trim();
+              if (new RegExp('Chapter\\\\s+' + chapterNum + '(\\\\s|:|\$)', 'i').test(text)) {
+                element = h;
+                break;
+              }
+            }
+          }
+        }
+        
         if (element) {
           element.scrollIntoView({ behavior: 'smooth' });
+          return true;
         }
+        return false;
       })();
     ''';
 
