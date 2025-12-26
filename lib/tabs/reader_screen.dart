@@ -35,6 +35,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
   int _currentChapterIndex = 0;
+  String? _currentParagraphAnchor; // First visible paragraph text for position matching
   Timer? _autosaveTimer;
   bool _autosaveEnabled = true;
   double _fontSize = 16.0;
@@ -794,6 +795,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       setState(() {
         _currentChapterIndex = progress.chapterIndex;
         _currentScrollPosition = progress.scrollPosition;
+        _currentParagraphAnchor = progress.paragraphAnchor;
       });
 
       // Try to match chapter by name first (works across online/offline formats)
@@ -832,41 +834,67 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         await _jumpToChapter(progress.chapterIndex);
       }
 
-      // After jumping to chapter, apply relative scroll within that chapter section
-      // Calculate scroll as percentage for font-size independence
-      if (progress.scrollPosition > 0) {
-        final scrollPercentage = progress.scrollPosition;
-        // Note: We store percentage (0-1) when possible for font-size independence
-        // For backward compatibility, if value > 1, treat as absolute pixels
-        if (scrollPercentage <= 1.0 && scrollPercentage > 0) {
-          // Percentage-based scroll
-          final js = '''
-            (function() {
-              const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-              window.scrollTo(0, maxScroll * $scrollPercentage);
-            })();
-          ''';
-          try {
-            if (_isWindows && _winController != null) {
-              await _winController!.executeScript(js);
-            } else if (_controller != null) {
-              await _controller!.runJavaScript(js);
+      // ADVANCED POSITION RESTORATION:
+      // 1. Primary: Try to find and scroll to the saved paragraph anchor text
+      // 2. Fallback: Use scroll position
+      bool positionRestored = false;
+      
+      if (progress.paragraphAnchor != null && progress.paragraphAnchor!.isNotEmpty) {
+        // Try to find paragraph by text content (works across font sizes and online/offline)
+        final escapedText = progress.paragraphAnchor!
+            .replaceAll('\\', '\\\\')
+            .replaceAll("'", "\\'")
+            .replaceAll('"', '\\"')
+            .replaceAll('\n', ' ')
+            .replaceAll('\r', '');
+        
+        final js = '''
+          (function() {
+            const searchText = '$escapedText';
+            const paragraphs = document.querySelectorAll('p');
+            
+            for (let p of paragraphs) {
+              const text = p.textContent.trim();
+              // Check if paragraph starts with our saved text (first 200 chars)
+              if (text.startsWith(searchText) || searchText.startsWith(text.substring(0, Math.min(text.length, 200)))) {
+                p.scrollIntoView({ behavior: 'auto', block: 'start' });
+                return true;
+              }
             }
-          } catch (e) {
-            debugPrint('Error restoring percentage scroll: $e');
+            return false;
+          })();
+        ''';
+        
+        try {
+          dynamic result;
+          if (_isWindows && _winController != null) {
+            result = await _winController!.executeScript(js);
+          } else if (_controller != null) {
+            result = await _controller!.runJavaScriptReturningResult(js);
           }
-        } else {
-          // Absolute pixel scroll (legacy)
-          final js = 'window.scrollTo(0, ${progress.scrollPosition});';
-          try {
-            if (_isWindows && _winController != null) {
-              await _winController!.executeScript(js);
-            } else if (_controller != null) {
-              await _controller!.runJavaScript(js);
-            }
-          } catch (e) {
-            debugPrint('Error restoring scroll position: $e');
+          
+          // Check if paragraph was found
+          if (result != null && result.toString() == 'true') {
+            positionRestored = true;
+            debugPrint('Position restored via paragraph anchor');
           }
+        } catch (e) {
+          debugPrint('Error restoring via paragraph anchor: $e');
+        }
+      }
+      
+      // Fallback to scroll position if paragraph anchor didn't work
+      if (!positionRestored && progress.scrollPosition > 0) {
+        final js = 'window.scrollTo(0, ${progress.scrollPosition});';
+        try {
+          if (_isWindows && _winController != null) {
+            await _winController!.executeScript(js);
+          } else if (_controller != null) {
+            await _controller!.runJavaScript(js);
+          }
+          debugPrint('Position restored via scroll position: ${progress.scrollPosition}');
+        } catch (e) {
+          debugPrint('Error restoring scroll position: $e');
         }
       }
     }
@@ -886,18 +914,43 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         _checkScrollPosition();
       });
     } else {
-      // For Android/iOS, use JavaScript channel
+      // For Android/iOS, use JavaScript channel with paragraph anchor detection
       const js = '''
         (function() {
           let lastPosition = 0;
+          
+          function getFirstVisibleParagraph() {
+            const paragraphs = document.querySelectorAll('p');
+            const viewportTop = window.pageYOffset;
+            const viewportBottom = viewportTop + window.innerHeight;
+            
+            for (let p of paragraphs) {
+              const rect = p.getBoundingClientRect();
+              const absTop = rect.top + window.pageYOffset;
+              
+              // Check if paragraph is in viewport
+              if (absTop >= viewportTop && absTop <= viewportBottom) {
+                let text = p.textContent.trim();
+                // Get first 200 chars max
+                if (text.length > 200) {
+                  text = text.substring(0, 200);
+                }
+                return text;
+              }
+            }
+            return null;
+          }
+          
           setInterval(() => {
             const currentPosition = window.pageYOffset;
             if (currentPosition !== lastPosition) {
               lastPosition = currentPosition;
+              const paragraphAnchor = getFirstVisibleParagraph();
               ReaderChannel.postMessage(JSON.stringify({
                 type: 'scroll',
                 position: currentPosition,
-                maxScroll: document.documentElement.scrollHeight - window.innerHeight
+                maxScroll: document.documentElement.scrollHeight - window.innerHeight,
+                paragraphAnchor: paragraphAnchor
               }));
             }
           }, 500);
@@ -911,11 +964,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (_winController == null) return;
     
     try {
+      // Windows: Get scroll position and first visible paragraph
       final js = '''
         (function() {
+          function getFirstVisibleParagraph() {
+            const paragraphs = document.querySelectorAll('p');
+            const viewportTop = window.pageYOffset;
+            const viewportBottom = viewportTop + window.innerHeight;
+            
+            for (let p of paragraphs) {
+              const rect = p.getBoundingClientRect();
+              const absTop = rect.top + window.pageYOffset;
+              
+              // Check if paragraph is in viewport
+              if (absTop >= viewportTop && absTop <= viewportBottom) {
+                let text = p.textContent.trim();
+                // Get first 200 chars max
+                if (text.length > 200) {
+                  text = text.substring(0, 200);
+                }
+                return text;
+              }
+            }
+            return null;
+          }
+          
           return JSON.stringify({
             position: window.pageYOffset,
-            maxScroll: document.documentElement.scrollHeight - window.innerHeight
+            maxScroll: document.documentElement.scrollHeight - window.innerHeight,
+            paragraphAnchor: getFirstVisibleParagraph()
           });
         })();
       ''';
@@ -925,12 +1002,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         final data = jsonDecode(result);
         final position = (data['position'] ?? 0).toDouble();
         final maxScroll = (data['maxScroll'] ?? 1).toDouble();
-        
-        // Store as percentage (0-1) for font-size independence
-        final scrollPercentage = maxScroll > 0 ? position / maxScroll : 0.0;
+        final paragraphAnchor = data['paragraphAnchor']?.toString();
         
         setState(() {
-          _currentScrollPosition = scrollPercentage.clamp(0.0, 1.0);
+          // Store actual scroll position (not percentage) for accuracy
+          _currentScrollPosition = position;
+          if (paragraphAnchor != null && paragraphAnchor.isNotEmpty) {
+            _currentParagraphAnchor = paragraphAnchor;
+          }
           _hasUnsavedChanges = true;
         });
         
@@ -953,12 +1032,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       if (data['type'] == 'scroll') {
         final position = (data['position'] ?? 0).toDouble();
         final maxScroll = (data['maxScroll'] ?? 1).toDouble();
-        
-        // Store as percentage (0-1) for font-size independence
-        final scrollPercentage = maxScroll > 0 ? position / maxScroll : 0.0;
+        final paragraphAnchor = data['paragraphAnchor']?.toString();
 
         setState(() {
-          _currentScrollPosition = scrollPercentage.clamp(0.0, 1.0);
+          // Store actual scroll position (not percentage) for accuracy
+          _currentScrollPosition = position;
+          if (paragraphAnchor != null && paragraphAnchor.isNotEmpty) {
+            _currentParagraphAnchor = paragraphAnchor;
+          }
           _hasUnsavedChanges = true;
         });
 
@@ -1052,6 +1133,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       chapterName: chapterName,
       lastReadAt: DateTime.now(),
       scrollPosition: _currentScrollPosition,
+      paragraphAnchor: _currentParagraphAnchor,
     );
 
     final updatedWork = widget.work.copyWith(
