@@ -920,7 +920,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
-  void _handleMessage(String message) {
+  Future<void> _handleMessage(String message) async {
     try {
       final data = jsonDecode(message);
       if (data['type'] == 'scroll') {
