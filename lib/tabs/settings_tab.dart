@@ -1,5 +1,6 @@
 import 'dart:io' show Platform, File;
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +10,39 @@ import '../providers/storage_provider.dart';
 import '../services/sync_service.dart';
 import '../services/library_export_service.dart';
 import '../services/download_service.dart';
+
+/// Reader mode options for controlling content source
+enum ReaderMode {
+  preferOnline('Prefer Online', 'Use online version when available, fallback to downloaded'),
+  preferDownloaded('Prefer Downloaded', 'Use downloaded version when available to save data'),
+  alwaysOnline('Always Online', 'Force online version only (no offline reading)'),
+  alwaysDownloaded('Always Downloaded', 'Force downloaded version only (no online loading)');
+
+  final String label;
+  final String description;
+  const ReaderMode(this.label, this.description);
+}
+
+/// Provider for reader mode setting
+final readerModeProvider = StateNotifierProvider<ReaderModeNotifier, ReaderMode>((ref) {
+  final storage = ref.watch(storageProvider);
+  final savedIndex = storage.settingsBox.get('reader_mode', defaultValue: 0);
+  final index = (savedIndex is int && savedIndex >= 0 && savedIndex < ReaderMode.values.length) 
+      ? savedIndex 
+      : 0;
+  return ReaderModeNotifier(ReaderMode.values[index], storage);
+});
+
+class ReaderModeNotifier extends StateNotifier<ReaderMode> {
+  final dynamic _storage;
+  
+  ReaderModeNotifier(super.state, this._storage);
+  
+  Future<void> setMode(ReaderMode mode) async {
+    state = mode;
+    await _storage.settingsBox.put('reader_mode', mode.index);
+  }
+}
 
 /// Provider for library grid columns setting
 final libraryGridColumnsProvider = StateNotifierProvider<LibraryGridColumnsNotifier, int>((ref) {
@@ -81,6 +115,11 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
         networkPreference: SyncNetworkPreference.values[networkIndex is int ? networkIndex : 0],
         lastSyncTime: lastSyncStr != null ? DateTime.tryParse(lastSyncStr.toString()) : null,
       );
+      
+      // Initialize Windows sync timer if auto-sync was enabled
+      if (Platform.isWindows && state.autoSyncEnabled) {
+        _startWindowsSyncTimer(state.interval, state.networkPreference);
+      }
     } catch (e) {
       debugPrint('Error loading sync settings: $e');
     }
@@ -90,13 +129,23 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     state = state.copyWith(autoSyncEnabled: enabled);
     await _storage.settingsBox.put('auto_sync_enabled', enabled);
     
-    if (enabled) {
-      await SyncService.scheduleSync(
-        interval: state.interval,
-        networkPreference: state.networkPreference,
-      );
+    if (Platform.isWindows) {
+      // Use Windows in-app timer
+      if (enabled) {
+        _startWindowsSyncTimer(state.interval, state.networkPreference);
+      } else {
+        _stopWindowsSyncTimer();
+      }
     } else {
-      await SyncService.cancelSync();
+      // Use Workmanager for mobile
+      if (enabled) {
+        await SyncService.scheduleSync(
+          interval: state.interval,
+          networkPreference: state.networkPreference,
+        );
+      } else {
+        await SyncService.cancelSync();
+      }
     }
   }
   
@@ -105,10 +154,14 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     await _storage.settingsBox.put('sync_interval', interval.index);
     
     if (state.autoSyncEnabled) {
-      await SyncService.scheduleSync(
-        interval: interval,
-        networkPreference: state.networkPreference,
-      );
+      if (Platform.isWindows) {
+        _startWindowsSyncTimer(interval, state.networkPreference);
+      } else {
+        await SyncService.scheduleSync(
+          interval: interval,
+          networkPreference: state.networkPreference,
+        );
+      }
     }
   }
   
@@ -117,10 +170,14 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     await _storage.settingsBox.put('sync_network_preference', preference.index);
     
     if (state.autoSyncEnabled) {
-      await SyncService.scheduleSync(
-        interval: state.interval,
-        networkPreference: preference,
-      );
+      if (Platform.isWindows) {
+        _startWindowsSyncTimer(state.interval, preference);
+      } else {
+        await SyncService.scheduleSync(
+          interval: state.interval,
+          networkPreference: preference,
+        );
+      }
     }
   }
   
@@ -134,6 +191,34 @@ class SettingsTab extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
+}
+
+/// Windows in-app sync timer (since Workmanager doesn't work on Windows)
+Timer? _windowsSyncTimer;
+
+void _startWindowsSyncTimer(SyncInterval interval, SyncNetworkPreference networkPreference) {
+  _windowsSyncTimer?.cancel();
+  if (!Platform.isWindows) return;
+  
+  _windowsSyncTimer = Timer.periodic(Duration(hours: interval.hours), (timer) async {
+    debugPrint('[WindowsSync] Running scheduled sync...');
+    try {
+      final syncService = SyncService();
+      final canSync = await syncService.canSyncWithCurrentNetwork(networkPreference);
+      if (canSync) {
+        await syncService.performSync();
+      }
+    } catch (e) {
+      debugPrint('[WindowsSync] Sync error: $e');
+    }
+  });
+  debugPrint('[WindowsSync] Started timer for every ${interval.hours} hours');
+}
+
+void _stopWindowsSyncTimer() {
+  _windowsSyncTimer?.cancel();
+  _windowsSyncTimer = null;
+  debugPrint('[WindowsSync] Stopped timer');
 }
 
 class _SettingsTabState extends ConsumerState<SettingsTab> {
@@ -502,11 +587,11 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
               title: const Text('Auto Sync'),
               subtitle: Text(
                 Platform.isWindows
-                    ? 'Background sync not available on Windows'
+                    ? 'In-app sync (requires app to be running)'
                     : 'Automatically check for work updates',
               ),
               value: syncSettings.autoSyncEnabled,
-              onChanged: Platform.isWindows ? null : syncNotifier.setAutoSyncEnabled,
+              onChanged: syncNotifier.setAutoSyncEnabled,
             ),
             
             // Sync Interval
@@ -514,9 +599,9 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
               leading: const Icon(Icons.schedule),
               title: const Text('Sync Interval'),
               subtitle: Text(syncSettings.interval.label),
-              enabled: syncSettings.autoSyncEnabled && !Platform.isWindows,
+              enabled: syncSettings.autoSyncEnabled,
               trailing: PopupMenuButton<SyncInterval>(
-                enabled: syncSettings.autoSyncEnabled && !Platform.isWindows,
+                enabled: syncSettings.autoSyncEnabled,
                 onSelected: syncNotifier.setInterval,
                 itemBuilder: (context) => SyncInterval.values
                     .map((i) => PopupMenuItem(value: i, child: Text(i.label)))
@@ -620,7 +705,53 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             
             const Divider(),
             
-            // Reader Settings placeholder
+            // Reader Settings Section
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Reader Settings',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            
+            // Reader Mode Setting
+            Builder(
+              builder: (context) {
+                final readerMode = ref.watch(readerModeProvider);
+                final readerModeNotifier = ref.read(readerModeProvider.notifier);
+                
+                return ListTile(
+                  leading: const Icon(Icons.chrome_reader_mode),
+                  title: const Text('Default Reader Mode'),
+                  subtitle: Text(readerMode.label),
+                  trailing: PopupMenuButton<ReaderMode>(
+                    onSelected: readerModeNotifier.setMode,
+                    itemBuilder: (context) => ReaderMode.values
+                        .map((m) => PopupMenuItem(
+                          value: m, 
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(m.label),
+                              Text(
+                                m.description,
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ))
+                        .toList(),
+                  ),
+                );
+              },
+            ),
+            
+            // Font & Reader Settings
             ListTile(
               leading: const Icon(Icons.text_fields),
               title: const Text('Font & Reader Settings'),

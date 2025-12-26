@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, File;
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart' as win;
 import '../models/work.dart';
@@ -11,6 +12,8 @@ import '../models/history_entry.dart';
 import '../providers/storage_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/storage_service.dart';
+import '../services/download_service.dart';
+import 'settings_tab.dart' show ReaderMode, readerModeProvider;
 
 class ReaderScreen extends ConsumerStatefulWidget {
   final Work work;
@@ -27,6 +30,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   bool _isWindows = Platform.isWindows;
   bool _isLoading = true;
   bool _isContentReady = false; // Track if content is ready to display
+  bool _isUsingOfflineContent = false; // Track if using downloaded content
+  String? _errorMessage; // Error message to display
   List<Chapter> _chapters = [];
   double _currentScrollPosition = 0.0;
   int _currentChapterIndex = 0;
@@ -234,108 +239,92 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Determine if we have internet connectivity
+  Future<bool> _hasInternetConnectivity() async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      return connectivity.contains(ConnectivityResult.wifi) ||
+             connectivity.contains(ConnectivityResult.mobile) ||
+             connectivity.contains(ConnectivityResult.ethernet);
+    } catch (e) {
+      debugPrint('Error checking connectivity: $e');
+      return false;
+    }
+  }
+
+  /// Determine the content source based on reader mode and availability
+  Future<({bool useOffline, String? offlineContent, String? errorMsg})> _determineContentSource() async {
+    final readerMode = ref.read(readerModeProvider);
+    final workId = widget.work.id;
+    
+    // Check if work is downloaded
+    final isDownloaded = await DownloadService.isWorkDownloaded(workId);
+    final hasInternet = await _hasInternetConnectivity();
+    
+    debugPrint('[ReaderScreen] Mode: ${readerMode.label}, Downloaded: $isDownloaded, Internet: $hasInternet');
+    
+    switch (readerMode) {
+      case ReaderMode.preferOnline:
+        // Use online if available, fallback to downloaded
+        if (hasInternet) {
+          return (useOffline: false, offlineContent: null, errorMsg: null);
+        } else if (isDownloaded) {
+          final content = await DownloadService.getDownloadedContent(workId);
+          return (useOffline: true, offlineContent: content, errorMsg: null);
+        } else {
+          return (useOffline: false, offlineContent: null, errorMsg: 'No internet connection and work not downloaded');
+        }
+        
+      case ReaderMode.preferDownloaded:
+        // Use downloaded if available, fallback to online
+        if (isDownloaded) {
+          final content = await DownloadService.getDownloadedContent(workId);
+          return (useOffline: true, offlineContent: content, errorMsg: null);
+        } else if (hasInternet) {
+          return (useOffline: false, offlineContent: null, errorMsg: null);
+        } else {
+          return (useOffline: false, offlineContent: null, errorMsg: 'Work not downloaded and no internet connection');
+        }
+        
+      case ReaderMode.alwaysOnline:
+        // Force online only
+        if (hasInternet) {
+          return (useOffline: false, offlineContent: null, errorMsg: null);
+        } else {
+          return (useOffline: false, offlineContent: null, errorMsg: 'No internet connection (Always Online mode)');
+        }
+        
+      case ReaderMode.alwaysDownloaded:
+        // Force downloaded only
+        if (isDownloaded) {
+          final content = await DownloadService.getDownloadedContent(workId);
+          return (useOffline: true, offlineContent: content, errorMsg: null);
+        } else {
+          return (useOffline: false, offlineContent: null, errorMsg: 'Work not downloaded (Always Downloaded mode)');
+        }
+    }
+  }
+
   Future<void> _initWebView() async {
     try {
+      // Determine content source based on reader mode
+      final source = await _determineContentSource();
+      
+      if (source.errorMsg != null) {
+        setState(() {
+          _isLoading = false;
+          _isContentReady = true;
+          _errorMessage = source.errorMsg;
+        });
+        return;
+      }
+      
+      _isUsingOfflineContent = source.useOffline;
+      
       if (_isWindows) {
-        // Windows webview
-        _winController = win.WebviewController();
-        await _winController!.initialize();
-        await _winController!.setBackgroundColor(Colors.transparent);
-        await _winController!.setPopupWindowPolicy(win.WebviewPopupWindowPolicy.deny);
-        
-        _winController!.webMessage.listen((event) {
-          try {
-            final s = event?.toString() ?? '';
-            if (s.isNotEmpty) _handleMessage(s);
-          } catch (e) {
-            debugPrint('Error handling Windows webview message: $e');
-          }
-        });
-        
-        // Listen for URL changes to handle navigation control
-        _winController!.historyChanged.listen((event) async {
-          final currentUrl = await _getWindowsCurrentUrl();
-          if (currentUrl != null) {
-            _handleWindowsNavigation(currentUrl);
-          }
-        });
-        
-        await _winController!.loadUrl(
-          'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
-        );
-        
-        // Wait a bit for page to load then apply all modifications
-        await Future.delayed(const Duration(seconds: 2));
-        if (mounted) {
-          await _removeUnwantedElements();
-          await _extractChapters();
-          await _applyThemeStyles();
-          await _applyFontSize();
-          if (_isDesktop) await _applyScrollSpeed();
-          await _injectNavigationInterceptor();
-          await _restoreReadingPosition();
-          // Now content is ready to display
-          setState(() {
-            _isLoading = false;
-            _isContentReady = true;
-          });
-        }
+        await _initWindowsWebView(source.offlineContent);
       } else {
-        // Android/iOS webview
-        final controller = WebViewController();
-        
-        controller
-          ..setJavaScriptMode(JavaScriptMode.unrestricted)
-          ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
-            _handleMessage(message.message);
-          })
-          ..setNavigationDelegate(
-            NavigationDelegate(
-              onNavigationRequest: (request) {
-                final url = request.url;
-                
-                // If navigating to another work or non-work AO3 URL, 
-                // close reader and pass URL back to browse tab
-                if (_isAnotherWork(url) || 
-                    (!_isAllowedNavigation(url) && url.contains('archiveofourown.org'))) {
-                  Navigator.pop(context, url);
-                  return NavigationDecision.prevent;
-                }
-                
-                // Allow navigation within current work
-                if (_isAllowedNavigation(url)) {
-                  return NavigationDecision.navigate;
-                }
-                
-                // Block external (non-AO3) URLs
-                debugPrint('Blocked navigation to external URL: $url');
-                return NavigationDecision.prevent;
-              },
-              onPageFinished: (url) async {
-                if (mounted) {
-                  await _removeUnwantedElements();
-                  await _extractChapters();
-                  await _applyThemeStyles();
-                  await _applyFontSize();
-                  if (_isDesktop) await _applyScrollSpeed();
-                  await _restoreReadingPosition();
-                  // Now content is ready to display
-                  setState(() {
-                    _isLoading = false;
-                    _isContentReady = true;
-                  });
-                }
-              },
-            ),
-          );
-
-        final url =
-            'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
-        await controller.loadRequest(Uri.parse(url));
-        
-        if (mounted) {
-          setState(() => _controller = controller);
-        }
+        await _initMobileWebView(source.offlineContent);
       }
     } catch (e, stackTrace) {
       debugPrint('WebView initialization error: $e');
@@ -345,20 +334,134 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         setState(() {
           _isLoading = false;
           _isContentReady = true;
-        });
-        
-        // Schedule the snackbar to show after the frame is built
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Error loading reader: $e'),
-                duration: const Duration(seconds: 5),
-              ),
-            );
-          }
+          _errorMessage = 'Error loading reader: $e';
         });
       }
+    }
+  }
+
+  Future<void> _initWindowsWebView(String? offlineContent) async {
+    // Windows webview
+    _winController = win.WebviewController();
+    await _winController!.initialize();
+    await _winController!.setBackgroundColor(Colors.transparent);
+    await _winController!.setPopupWindowPolicy(win.WebviewPopupWindowPolicy.deny);
+    
+    _winController!.webMessage.listen((event) {
+      try {
+        final s = event?.toString() ?? '';
+        if (s.isNotEmpty) _handleMessage(s);
+      } catch (e) {
+        debugPrint('Error handling Windows webview message: $e');
+      }
+    });
+    
+    // Listen for URL changes to handle navigation control (only for online mode)
+    if (!_isUsingOfflineContent) {
+      _winController!.historyChanged.listen((event) async {
+        final currentUrl = await _getWindowsCurrentUrl();
+        if (currentUrl != null) {
+          _handleWindowsNavigation(currentUrl);
+        }
+      });
+    }
+    
+    if (offlineContent != null) {
+      // Load offline content - Windows webview can load from file URL
+      final filePath = await DownloadService.getWorkDownloadPath(widget.work.id);
+      await _winController!.loadUrl('file:///$filePath');
+      debugPrint('[ReaderScreen] Windows: Loaded offline content from file');
+    } else {
+      // Load online content
+      await _winController!.loadUrl(
+        'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true',
+      );
+    }
+    
+    // Wait a bit for page to load then apply all modifications
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted) {
+      await _removeUnwantedElements();
+      await _extractChapters();
+      await _applyThemeStyles();
+      await _applyFontSize();
+      if (_isDesktop) await _applyScrollSpeed();
+      if (!_isUsingOfflineContent) await _injectNavigationInterceptor();
+      await _restoreReadingPosition();
+      // Now content is ready to display
+      setState(() {
+        _isLoading = false;
+        _isContentReady = true;
+      });
+    }
+  }
+
+  Future<void> _initMobileWebView(String? offlineContent) async {
+    // Android/iOS webview
+    final controller = WebViewController();
+    
+    controller
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('ReaderChannel', onMessageReceived: (message) {
+        _handleMessage(message.message);
+      })
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            // For offline content, block all navigation
+            if (_isUsingOfflineContent) {
+              return NavigationDecision.prevent;
+            }
+            
+            final url = request.url;
+            
+            // If navigating to another work or non-work AO3 URL, 
+            // close reader and pass URL back to browse tab
+            if (_isAnotherWork(url) || 
+                (!_isAllowedNavigation(url) && url.contains('archiveofourown.org'))) {
+              Navigator.pop(context, url);
+              return NavigationDecision.prevent;
+            }
+            
+            // Allow navigation within current work
+            if (_isAllowedNavigation(url)) {
+              return NavigationDecision.navigate;
+            }
+            
+            // Block external (non-AO3) URLs
+            debugPrint('Blocked navigation to external URL: $url');
+            return NavigationDecision.prevent;
+          },
+          onPageFinished: (url) async {
+            if (mounted) {
+              await _removeUnwantedElements();
+              await _extractChapters();
+              await _applyThemeStyles();
+              await _applyFontSize();
+              if (_isDesktop) await _applyScrollSpeed();
+              await _restoreReadingPosition();
+              // Now content is ready to display
+              setState(() {
+                _isLoading = false;
+                _isContentReady = true;
+              });
+            }
+          },
+        ),
+      );
+
+    if (offlineContent != null) {
+      // Load offline content
+      await controller.loadHtmlString(offlineContent);
+      debugPrint('[ReaderScreen] Mobile: Loaded offline content');
+    } else {
+      // Load online content
+      final url = 'https://archiveofourown.org/works/${widget.work.id}?view_full_work=true&view_adult=true';
+      await controller.loadRequest(Uri.parse(url));
+    }
+    
+    if (mounted) {
+      setState(() => _controller = controller);
     }
   }
 
@@ -1031,6 +1134,57 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 child: const Icon(Icons.settings),
               ),
             ),
+            // Offline indicator
+            if (_isUsingOfflineContent && _isContentReady)
+              Positioned(
+                top: 8,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.offline_pin, size: 16, color: Colors.white),
+                        SizedBox(width: 4),
+                        Text(
+                          'Offline Mode',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            // Error message
+            if (_errorMessage != null && _isContentReady)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const SizedBox(height: 16),
+                      Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Go Back'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
