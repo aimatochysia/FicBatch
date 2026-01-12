@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
@@ -12,7 +13,7 @@ class HomeTab extends ConsumerStatefulWidget {
   ConsumerState<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends ConsumerState<HomeTab> {
+class _HomeTabState extends ConsumerState<HomeTab> with WidgetsBindingObserver {
   final _batchController = TextEditingController();
   bool _isBatchImporting = false;
   int _parsedCount = 0;
@@ -23,27 +24,73 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   int _readingStreak = 0;
   bool _checkedInToday = false;
   DateTime? _lastCheckIn;
-  int _totalWordsRead = 0;
+  
+  // App usage time tracking (in seconds)
+  int _appUsageSeconds = 0;
+  Timer? _usageTimer;
+  DateTime? _sessionStartTime;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadDashboardStats();
+    _startUsageTimer();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _stopUsageTimer();
     _batchController.dispose();
     super.dispose();
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _stopUsageTimer();
+    } else if (state == AppLifecycleState.resumed) {
+      _startUsageTimer();
+    }
+  }
+  
+  void _startUsageTimer() {
+    _sessionStartTime = DateTime.now();
+    _usageTimer?.cancel();
+    int secondsSinceLastSave = 0;
+    _usageTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {
+          _appUsageSeconds++;
+        });
+        secondsSinceLastSave++;
+        // Save every 30 seconds to prevent data loss
+        if (secondsSinceLastSave >= 30) {
+          secondsSinceLastSave = 0;
+          _saveAppUsageTime();
+        }
+      }
+    });
+  }
+  
+  void _stopUsageTimer() {
+    _usageTimer?.cancel();
+    _usageTimer = null;
+    _saveAppUsageTime();
+  }
+  
+  Future<void> _saveAppUsageTime() async {
+    final storage = ref.read(storageProvider);
+    await storage.settingsBox.put('app_usage_seconds', _appUsageSeconds);
+    await storage.settingsBox.put('app_usage_year', DateTime.now().year);
   }
 
   Future<void> _loadDashboardStats() async {
     final storage = ref.read(storageProvider);
     final works = storage.getAllWorks();
-    final history = await storage.getHistory();
     
     // Calculate reading streak from history
-    int streak = 0;
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
     
@@ -62,30 +109,17 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     
     // Calculate streak from check-in history
     final streakRaw = storage.settingsBox.get('check_in_streak') as int? ?? 0;
-    streak = streakRaw;
+    final streak = streakRaw;
     
-    // Calculate estimated words read from works with reading progress
-    int totalWords = 0;
-    for (final work in works) {
-      final progress = work.readingProgress;
-      final wordCount = work.wordsCount ?? 0;
-      final chapterCount = work.chaptersCount ?? 1;
-      
-      if (progress.isCompleted) {
-        // Completed works: count full word count
-        totalWords += wordCount;
-      } else if (progress.chapterIndex > 0 || progress.scrollPosition > 0) {
-        // In-progress works: estimate based on chapter progress
-        // Use chapter index as a rough proxy for progress
-        if (chapterCount > 0 && wordCount > 0) {
-          final wordsPerChapter = wordCount / chapterCount;
-          // Count completed chapters plus partial progress on current chapter
-          final completedChapters = progress.chapterIndex;
-          final currentChapterProgress = progress.scrollPosition.clamp(0.0, 1.0);
-          final estimatedChaptersRead = completedChapters + currentChapterProgress;
-          totalWords += (wordsPerChapter * estimatedChaptersRead).round();
-        }
-      }
+    // Load app usage time (reset if year changed)
+    final savedYear = storage.settingsBox.get('app_usage_year') as int? ?? today.year;
+    int usageSeconds = storage.settingsBox.get('app_usage_seconds') as int? ?? 0;
+    
+    // Reset usage time if year changed
+    if (savedYear != today.year) {
+      usageSeconds = 0;
+      await storage.settingsBox.put('app_usage_seconds', 0);
+      await storage.settingsBox.put('app_usage_year', today.year);
     }
     
     if (mounted) {
@@ -94,7 +128,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         _readingStreak = streak;
         _checkedInToday = checkedInToday;
         _lastCheckIn = lastCheckIn;
-        _totalWordsRead = totalWords;
+        _appUsageSeconds = usageSeconds;
       });
     }
   }
@@ -229,13 +263,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     }
   }
 
-  String _formatWordsRead(int words) {
-    if (words >= 1000000) {
-      return '${(words / 1000000).toStringAsFixed(1)}M';
-    } else if (words >= 1000) {
-      return '${(words / 1000).toStringAsFixed(1)}K';
-    }
-    return words.toString();
+  String _formatAppUsageTime(int seconds) {
+    final days = seconds ~/ 86400;
+    final hours = (seconds % 86400) ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    
+    return '${days.toString().padLeft(3, '0')}:${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
   String _getMotivationalMessage() {
@@ -311,10 +345,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   Expanded(
                     child: _buildStatCard(
                       context,
-                      icon: Icons.menu_book,
-                      label: 'Words Read',
-                      value: _formatWordsRead(_totalWordsRead),
+                      icon: Icons.timer,
+                      label: 'Time Used',
+                      value: _formatAppUsageTime(_appUsageSeconds),
                       color: Colors.teal,
+                      smallText: true,
                     ),
                   ),
                 ],
@@ -503,6 +538,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     required String label,
     required String value,
     required Color color,
+    bool smallText = false,
   }) {
     final theme = Theme.of(context);
     return Card(
@@ -516,7 +552,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             const SizedBox(height: 8),
             Text(
               value,
-              style: theme.textTheme.titleMedium?.copyWith(
+              style: (smallText ? theme.textTheme.bodySmall : theme.textTheme.titleMedium)?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: color,
               ),
