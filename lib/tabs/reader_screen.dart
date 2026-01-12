@@ -43,6 +43,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   DateTime? _lastSaveTime;
   bool _hasUnsavedChanges = false;
   bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  
+  // Cached storage reference for use in dispose
+  StorageService? _cachedStorage;
 
   @override
   void initState() {
@@ -53,10 +56,52 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Cache the storage reference for use in dispose
+    _cachedStorage = ref.read(storageProvider);
+  }
+
+  @override
   void dispose() {
     _autosaveTimer?.cancel();
-    _saveProgress();
+    // Use cached storage since ref is not available after dispose
+    _saveProgressSync();
     super.dispose();
+  }
+  
+  /// Synchronous save for use in dispose - uses cached storage
+  void _saveProgressSync() {
+    if (_cachedStorage == null) {
+      debugPrint('⚠️ Warning: Cannot save progress - storage not initialized');
+      return;
+    }
+    if (!_hasUnsavedChanges) return;
+
+    final chapterAnchor = _currentChapterIndex < _chapters.length
+        ? _chapters[_currentChapterIndex].anchor
+        : null;
+    final chapterName = _currentChapterIndex < _chapters.length
+        ? _chapters[_currentChapterIndex].title
+        : null;
+
+    final updatedProgress = widget.work.readingProgress.copyWith(
+      chapterIndex: _currentChapterIndex,
+      chapterAnchor: chapterAnchor,
+      chapterName: chapterName,
+      lastReadAt: DateTime.now(),
+      scrollPosition: _currentScrollPosition,
+      paragraphAnchor: _currentParagraphAnchor,
+    );
+
+    final updatedWork = widget.work.copyWith(
+      readingProgress: updatedProgress,
+      lastUserOpened: DateTime.now(),
+    );
+
+    // Save work synchronously (Hive operations are fast)
+    _cachedStorage!.saveWork(updatedWork);
+    _hasUnsavedChanges = false;
   }
 
   Future<void> _loadReaderSettings() async {
@@ -1156,9 +1201,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final storage = ref.read(storageProvider);
     final historyBox = storage.settingsBox;
     
-    final historyList = (historyBox.get('history') as List?)?.cast<Map>() ?? [];
+    final historyList = (historyBox.get('history') as List?)?.map((e) => Map<String, dynamic>.from(e)).toList() ?? [];
     
-    // Add new entry
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // Check if there's already an entry for this work today - remove it if so (we'll re-add at top)
+    historyList.removeWhere((entry) {
+      if (entry['workId'] != widget.work.id) return false;
+      final accessedAt = entry['accessedAt'];
+      if (accessedAt == null) return false;
+      try {
+        final entryDate = DateTime.parse(accessedAt.toString());
+        final entryDay = DateTime(entryDate.year, entryDate.month, entryDate.day);
+        return entryDay == today;
+      } catch (_) {
+        return false;
+      }
+    });
+    
+    // Add new entry at the beginning
     final entry = HistoryEntry(
       workId: widget.work.id,
       title: widget.work.title,
@@ -1166,7 +1228,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       chapterIndex: _currentChapterIndex,
       chapterName: chapterName,
       scrollPosition: _currentScrollPosition,
-      accessedAt: DateTime.now(),
+      accessedAt: now,
     );
 
     historyList.insert(0, entry.toJson());

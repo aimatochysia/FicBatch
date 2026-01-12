@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
 import '../repositories/work_repository.dart';
 import '../services/download_service.dart';
 import '../services/library_export_service.dart';
+import '../services/sync_service.dart';
 import '../models/work.dart';
 import 'reader_screen.dart';
 import 'settings_tab.dart' show libraryGridColumnsProvider, libraryViewModeProvider, LibraryViewMode;
@@ -19,6 +21,38 @@ class LibraryTab extends ConsumerStatefulWidget {
 class _LibraryTabState extends ConsumerState<LibraryTab> {
   bool _isDownloading = false;
   String _downloadProgress = '';
+  bool _isSyncing = false;
+  
+  Future<void> _syncCategory(String category, List<Work> works) async {
+    if (_isSyncing || works.isEmpty) return;
+    
+    setState(() => _isSyncing = true);
+    
+    try {
+      final syncService = SyncService();
+      final updates = await syncService.performSync();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(updates.isEmpty 
+                ? 'No updates found in $category' 
+                : 'Found ${updates.length} update(s)'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sync failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
   
   Future<void> _downloadWork(Work work) async {
     setState(() {
@@ -684,31 +718,56 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
   }
 
   Widget _buildCategoryContent(String category, List<Work> works, List<Work> allWorks) {
-    return Column(
-      children: [
-        // Category action bar (only for specific categories, not 'All')
-        if (category != 'All')
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _isDownloading ? null : () => _downloadCategory(category, works),
-                  icon: const Icon(Icons.download, size: 16),
-                  label: Text('Download All (${works.length})'),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: () => _showCategoryOptionsDialog(category, works),
-                  icon: const Icon(Icons.settings),
-                  tooltip: 'Category Options',
-                ),
-              ],
+    final isMobile = Platform.isAndroid || Platform.isIOS;
+    
+    Widget buildGrid() {
+      return Column(
+        children: [
+          // Category action bar (only for specific categories, not 'All')
+          if (category != 'All')
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _isDownloading ? null : () => _downloadCategory(category, works),
+                    icon: const Icon(Icons.download, size: 16),
+                    label: Text('Download All (${works.length})'),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _isSyncing ? null : () => _syncCategory(category, works),
+                    icon: _isSyncing 
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.sync),
+                    tooltip: 'Sync updates',
+                  ),
+                  IconButton(
+                    onPressed: () => _showCategoryOptionsDialog(category, works),
+                    icon: const Icon(Icons.settings),
+                    tooltip: 'Category Options',
+                  ),
+                ],
+              ),
             ),
-          ),
-        Expanded(child: _grid(works)),
-      ],
-    );
+          Expanded(child: _grid(works)),
+        ],
+      );
+    }
+    
+    // Wrap with RefreshIndicator for mobile
+    if (isMobile) {
+      return RefreshIndicator(
+        onRefresh: () => _syncCategory(category, works),
+        child: buildGrid(),
+      );
+    }
+    
+    return buildGrid();
   }
 
   Widget _grid(List works) {

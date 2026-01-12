@@ -43,6 +43,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
   bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  bool get _isMobile => Platform.isAndroid || Platform.isIOS;
 
   List<String> _getSavedWorkIds() {
     final storage = ref.read(storageProvider);
@@ -1336,6 +1337,34 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
     }
   }
 
+  /// Notify the webview that a save was confirmed (user selected categories and pressed Save)
+  Future<void> _confirmSaveInWebview(String workId) async {
+    final js = 'if (window.__fb_confirmSave) window.__fb_confirmSave("$workId");';
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Failed to confirm save in webview: $e');
+    }
+  }
+
+  /// Notify the webview that a save was cancelled (user dismissed dialog)
+  Future<void> _cancelSaveInWebview(String workId) async {
+    final js = 'if (window.__fb_cancelSave) window.__fb_cancelSave("$workId");';
+    try {
+      if (_isWindows && _winController != null) {
+        await _winController!.executeScript(js);
+      } else if (_controller != null) {
+        await _controller!.runJavaScript(js);
+      }
+    } catch (e) {
+      debugPrint('Failed to cancel save in webview: $e');
+    }
+  }
+
   Future<void> _handleSaveFromListing(
     String workId,
     Map<String, dynamic> meta,
@@ -1348,6 +1377,7 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
       if (cats.isEmpty) {
         await storage.saveWork(work);
         if (mounted) _showSnackBar('Saved “${work.title}” (default).');
+        await _confirmSaveInWebview(workId);
         return;
       }
 
@@ -1397,14 +1427,20 @@ a.tag, .tag { background-color: #2b3134 !important; color: #e8e6e3 !important; }
         ),
       );
 
-      if (chosen == null || chosen.isEmpty) return;
+      if (chosen == null || chosen.isEmpty) {
+        // User cancelled - reset the button in webview
+        await _cancelSaveInWebview(workId);
+        return;
+      }
 
       await storage.saveWork(work);
       await storage.setCategoriesForWork(work.id, chosen);
+      await _confirmSaveInWebview(workId);
       if (mounted)
         _showSnackBar('Saved “${work.title}” to ${chosen.join(', ')}.');
     } catch (e) {
       debugPrint('Save from listing failed: $e');
+      await _cancelSaveInWebview(workId);
       if (mounted) _showSnackBar('Failed to save from listing.');
     }
   }
