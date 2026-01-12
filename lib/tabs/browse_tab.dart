@@ -43,6 +43,7 @@ class _BrowseTabState extends ConsumerState<BrowseTab> {
   static const int _browseTabIndex = 3;
   DateTime? _lastInjectorPing;
   bool get _isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  bool get _isMobile => Platform.isAndroid || Platform.isIOS;
 
   List<String> _getSavedWorkIds() {
     final storage = ref.read(storageProvider);
