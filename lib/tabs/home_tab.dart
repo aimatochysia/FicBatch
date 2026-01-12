@@ -64,11 +64,27 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     final streakRaw = storage.settingsBox.get('check_in_streak') as int? ?? 0;
     streak = streakRaw;
     
-    // Calculate total words read from works with reading progress
+    // Calculate estimated words read from works with reading progress
     int totalWords = 0;
     for (final work in works) {
-      if (work.readingProgress.chapterIndex > 0 || work.readingProgress.scrollPosition > 0) {
-        totalWords += work.wordsCount ?? 0;
+      final progress = work.readingProgress;
+      final wordCount = work.wordsCount ?? 0;
+      final chapterCount = work.chaptersCount ?? 1;
+      
+      if (progress.isCompleted) {
+        // Completed works: count full word count
+        totalWords += wordCount;
+      } else if (progress.chapterIndex > 0 || progress.scrollPosition > 0) {
+        // In-progress works: estimate based on chapter progress
+        // Use chapter index as a rough proxy for progress
+        if (chapterCount > 0 && wordCount > 0) {
+          final wordsPerChapter = wordCount / chapterCount;
+          // Count completed chapters plus partial progress on current chapter
+          final completedChapters = progress.chapterIndex;
+          final currentChapterProgress = progress.scrollPosition.clamp(0.0, 1.0);
+          final estimatedChaptersRead = completedChapters + currentChapterProgress;
+          totalWords += (wordsPerChapter * estimatedChaptersRead).round();
+        }
       }
     }
     
