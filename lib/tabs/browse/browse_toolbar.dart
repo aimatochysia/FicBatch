@@ -74,12 +74,7 @@ class BrowseToolbar extends StatelessWidget {
                 ),
               ),
             ),
-            // Save to library button - hidden on mobile (Android/iOS)
-            // Works are saved via the injected buttons on listing pages
-            if (!_isMobile) ...[
-              SizedBox(width: isCompact ? 2 : 8),
-              _buildSaveToLibraryButton(isCompact),
-            ],
+            // Save to library button removed - works are saved via injected buttons on listing pages
           ],
         );
       },
