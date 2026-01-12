@@ -2,7 +2,7 @@ name: ficbatch
 description: "AO3 browser and reader."
 
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.1+1
 
 environment:
   sdk: ^3.8.1
