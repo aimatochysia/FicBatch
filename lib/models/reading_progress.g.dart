@@ -17,13 +17,14 @@ class ReadingProgressAdapter extends TypeAdapter<ReadingProgress> {
       scrollPosition: fields[3] as double,
       isCompleted: fields[4] as bool,
       chapterName: fields[5] as String?,
+      paragraphAnchor: fields[6] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ReadingProgress obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.chapterIndex)
       ..writeByte(1)
@@ -35,7 +36,9 @@ class ReadingProgressAdapter extends TypeAdapter<ReadingProgress> {
       ..writeByte(4)
       ..write(obj.isCompleted)
       ..writeByte(5)
-      ..write(obj.chapterName);
+      ..write(obj.chapterName)
+      ..writeByte(6)
+      ..write(obj.paragraphAnchor);
   }
 
   @override

@@ -1,9 +1,48 @@
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, File;
+import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/storage_provider.dart';
 import '../services/sync_service.dart';
+import '../services/library_export_service.dart';
+import '../services/download_service.dart';
+
+/// Reader mode options for controlling content source
+enum ReaderMode {
+  preferOnline('Prefer Online', 'Use online version when available, fallback to downloaded'),
+  preferDownloaded('Prefer Downloaded', 'Use downloaded version when available to save data'),
+  alwaysOnline('Always Online', 'Force online version only (no offline reading)'),
+  alwaysDownloaded('Always Downloaded', 'Force downloaded version only (no online loading)');
+
+  final String label;
+  final String description;
+  const ReaderMode(this.label, this.description);
+}
+
+/// Provider for reader mode setting
+final readerModeProvider = StateNotifierProvider<ReaderModeNotifier, ReaderMode>((ref) {
+  final storage = ref.watch(storageProvider);
+  final savedIndex = storage.settingsBox.get('reader_mode', defaultValue: 0);
+  final index = (savedIndex is int && savedIndex >= 0 && savedIndex < ReaderMode.values.length) 
+      ? savedIndex 
+      : 0;
+  return ReaderModeNotifier(ReaderMode.values[index], storage);
+});
+
+class ReaderModeNotifier extends StateNotifier<ReaderMode> {
+  final dynamic _storage;
+  
+  ReaderModeNotifier(super.state, this._storage);
+  
+  Future<void> setMode(ReaderMode mode) async {
+    state = mode;
+    await _storage.settingsBox.put('reader_mode', mode.index);
+  }
+}
 
 /// Provider for library grid columns setting
 final libraryGridColumnsProvider = StateNotifierProvider<LibraryGridColumnsNotifier, int>((ref) {
@@ -20,6 +59,37 @@ class LibraryGridColumnsNotifier extends StateNotifier<int> {
   Future<void> setColumns(int columns) async {
     state = columns;
     await _storage.settingsBox.put('library_grid_columns', columns);
+  }
+}
+
+/// Library view mode (grid or list)
+enum LibraryViewMode {
+  grid('Grid', 'Display works as cards in a grid'),
+  list('List', 'Display works in a compact list');
+
+  final String label;
+  final String description;
+  const LibraryViewMode(this.label, this.description);
+}
+
+/// Provider for library view mode setting (grid vs list)
+final libraryViewModeProvider = StateNotifierProvider<LibraryViewModeNotifier, LibraryViewMode>((ref) {
+  final storage = ref.watch(storageProvider);
+  final savedIndex = storage.settingsBox.get('library_view_mode', defaultValue: 0);
+  final index = (savedIndex is int && savedIndex >= 0 && savedIndex < LibraryViewMode.values.length) 
+      ? savedIndex 
+      : 0;
+  return LibraryViewModeNotifier(LibraryViewMode.values[index], storage);
+});
+
+class LibraryViewModeNotifier extends StateNotifier<LibraryViewMode> {
+  final dynamic _storage;
+  
+  LibraryViewModeNotifier(super.state, this._storage);
+  
+  Future<void> setMode(LibraryViewMode mode) async {
+    state = mode;
+    await _storage.settingsBox.put('library_view_mode', mode.index);
   }
 }
 
@@ -76,6 +146,11 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
         networkPreference: SyncNetworkPreference.values[networkIndex is int ? networkIndex : 0],
         lastSyncTime: lastSyncStr != null ? DateTime.tryParse(lastSyncStr.toString()) : null,
       );
+      
+      // Initialize Windows sync timer if auto-sync was enabled
+      if (Platform.isWindows && state.autoSyncEnabled) {
+        WindowsSyncManager().startSync(state.interval, state.networkPreference);
+      }
     } catch (e) {
       debugPrint('Error loading sync settings: $e');
     }
@@ -85,13 +160,23 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     state = state.copyWith(autoSyncEnabled: enabled);
     await _storage.settingsBox.put('auto_sync_enabled', enabled);
     
-    if (enabled) {
-      await SyncService.scheduleSync(
-        interval: state.interval,
-        networkPreference: state.networkPreference,
-      );
+    if (Platform.isWindows) {
+      // Use Windows in-app timer
+      if (enabled) {
+        WindowsSyncManager().startSync(state.interval, state.networkPreference);
+      } else {
+        WindowsSyncManager().stopSync();
+      }
     } else {
-      await SyncService.cancelSync();
+      // Use Workmanager for mobile
+      if (enabled) {
+        await SyncService.scheduleSync(
+          interval: state.interval,
+          networkPreference: state.networkPreference,
+        );
+      } else {
+        await SyncService.cancelSync();
+      }
     }
   }
   
@@ -100,10 +185,14 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     await _storage.settingsBox.put('sync_interval', interval.index);
     
     if (state.autoSyncEnabled) {
-      await SyncService.scheduleSync(
-        interval: interval,
-        networkPreference: state.networkPreference,
-      );
+      if (Platform.isWindows) {
+        WindowsSyncManager().startSync(interval, state.networkPreference);
+      } else {
+        await SyncService.scheduleSync(
+          interval: interval,
+          networkPreference: state.networkPreference,
+        );
+      }
     }
   }
   
@@ -112,10 +201,14 @@ class SyncSettingsNotifier extends StateNotifier<SyncSettings> {
     await _storage.settingsBox.put('sync_network_preference', preference.index);
     
     if (state.autoSyncEnabled) {
-      await SyncService.scheduleSync(
-        interval: state.interval,
-        networkPreference: preference,
-      );
+      if (Platform.isWindows) {
+        WindowsSyncManager().startSync(state.interval, preference);
+      } else {
+        await SyncService.scheduleSync(
+          interval: state.interval,
+          networkPreference: preference,
+        );
+      }
     }
   }
   
@@ -131,8 +224,46 @@ class SettingsTab extends ConsumerStatefulWidget {
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
 }
 
+/// Windows in-app sync manager (singleton pattern since Workmanager doesn't work on Windows)
+class WindowsSyncManager {
+  static final WindowsSyncManager _instance = WindowsSyncManager._internal();
+  factory WindowsSyncManager() => _instance;
+  WindowsSyncManager._internal();
+  
+  Timer? _syncTimer;
+  
+  void startSync(SyncInterval interval, SyncNetworkPreference networkPreference) {
+    _syncTimer?.cancel();
+    if (!Platform.isWindows) return;
+    
+    _syncTimer = Timer.periodic(Duration(hours: interval.hours), (timer) async {
+      debugPrint('[WindowsSync] Running scheduled sync...');
+      try {
+        final syncService = SyncService();
+        final canSync = await syncService.canSyncWithCurrentNetwork(networkPreference);
+        if (canSync) {
+          await syncService.performSync();
+        }
+      } catch (e) {
+        debugPrint('[WindowsSync] Sync error: $e');
+      }
+    });
+    debugPrint('[WindowsSync] Started timer for every ${interval.hours} hours');
+  }
+  
+  void stopSync() {
+    _syncTimer?.cancel();
+    _syncTimer = null;
+    debugPrint('[WindowsSync] Stopped timer');
+  }
+  
+  bool get isRunning => _syncTimer != null && _syncTimer!.isActive;
+}
+
 class _SettingsTabState extends ConsumerState<SettingsTab> {
   bool _isSyncing = false;
+  bool _isExporting = false;
+  bool _isImporting = false;
 
   Future<void> _performManualSync() async {
     setState(() => _isSyncing = true);
@@ -184,12 +315,251 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     }
   }
 
+  Future<void> _exportLibrary() async {
+    setState(() => _isExporting = true);
+    
+    try {
+      final storage = ref.read(storageProvider);
+      final exportService = LibraryExportService(storage);
+      
+      final filePath = await exportService.exportToFile();
+      
+      if (mounted) {
+        _showExportSuccessDialog(filePath);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
+    }
+  }
+
+  void _showExportSuccessDialog(String filePath) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Export Successful'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Library exported successfully to:'),
+            const SizedBox(height: 8),
+            SelectableText(
+              filePath,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'You can copy this file to another device and import it there.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: filePath));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Path copied to clipboard')),
+              );
+            },
+            child: const Text('Copy Path'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importLibrary() async {
+    // Show import dialog with text input for JSON
+    final controller = TextEditingController();
+    
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import Library'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Paste the library JSON content below, or enter a file path:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                  hintText: '{"version": 1, "works": [...], ...}\n\nOr paste file path',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Import mode:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '• Merge: Add new works, update existing (preserve reading progress)\n'
+                '• Replace: Clear library and import all data',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'content': controller.text,
+              'mode': ImportMode.merge,
+            }),
+            child: const Text('Merge Import'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'content': controller.text,
+              'mode': ImportMode.replace,
+            }),
+            child: const Text('Replace All'),
+          ),
+        ],
+      ),
+    );
+    
+    controller.dispose();
+    
+    if (result == null) return;
+    
+    final content = result['content'] as String;
+    final mode = result['mode'] as ImportMode;
+    
+    if (content.isEmpty) return;
+    
+    setState(() => _isImporting = true);
+    
+    try {
+      final storage = ref.read(storageProvider);
+      final exportService = LibraryExportService(storage);
+      
+      ImportResult importResult;
+      
+      // Check if content is a file path
+      if (_isFilePath(content)) {
+        importResult = await exportService.importFromFile(content.trim(), mode: mode);
+      } else {
+        importResult = await exportService.importFromJson(content, mode: mode);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import complete: ${importResult.toSummary()}'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isImporting = false);
+      }
+    }
+  }
+
+  bool _isFilePath(String content) {
+    final trimmed = content.trim();
+    // Check if it looks like a file path
+    if (Platform.isWindows) {
+      return trimmed.contains(':\\') || trimmed.startsWith('\\\\');
+    } else {
+      return trimmed.startsWith('/');
+    }
+  }
+
+  Future<void> _showStorageInfo() async {
+    final storage = ref.read(storageProvider);
+    final works = storage.getAllWorks();
+    final categories = await storage.getCategories();
+    final downloadSize = await DownloadService.getStorageUsage();
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Storage Info'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _storageInfoRow('Works in library', '${works.length}'),
+            _storageInfoRow('Categories', '${categories.length}'),
+            _storageInfoRow('Downloaded works', '${works.where((w) => w.isDownloaded).length}'),
+            _storageInfoRow('Download storage', _formatBytes(downloadSize)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _storageInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = ref.watch(themeProvider);
     final themeNotifier = ref.read(themeProvider.notifier);
     final gridColumns = ref.watch(libraryGridColumnsProvider);
     final gridNotifier = ref.read(libraryGridColumnsProvider.notifier);
+    final viewMode = ref.watch(libraryViewModeProvider);
+    final viewModeNotifier = ref.read(libraryViewModeProvider.notifier);
     final syncSettings = ref.watch(syncSettingsProvider);
     final syncNotifier = ref.read(syncSettingsProvider.notifier);
 
@@ -220,11 +590,34 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             
             const Divider(),
             
-            // Library Grid Size
+            // Library View Mode (Grid vs List)
             ListTile(
-              leading: const Icon(Icons.grid_view),
-              title: const Text('Library Grid Columns'),
-              subtitle: Text('$gridColumns columns'),
+              leading: Icon(viewMode == LibraryViewMode.grid ? Icons.grid_view : Icons.list),
+              title: const Text('Library View Mode'),
+              subtitle: Text(viewMode.label),
+              trailing: PopupMenuButton<LibraryViewMode>(
+                onSelected: viewModeNotifier.setMode,
+                itemBuilder: (context) => LibraryViewMode.values
+                    .map((mode) => PopupMenuItem(
+                          value: mode,
+                          child: Row(
+                            children: [
+                              Icon(mode == LibraryViewMode.grid ? Icons.grid_view : Icons.list, size: 20),
+                              const SizedBox(width: 8),
+                              Text(mode.label),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+            
+            // Library Grid Size (only show when in grid mode)
+            if (viewMode == LibraryViewMode.grid)
+              ListTile(
+                leading: const Icon(Icons.grid_on),
+                title: const Text('Library Grid Columns'),
+                subtitle: Text('$gridColumns columns'),
               trailing: PopupMenuButton<int>(
                 onSelected: gridNotifier.setColumns,
                 itemBuilder: (context) => [
@@ -258,11 +651,11 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
               title: const Text('Auto Sync'),
               subtitle: Text(
                 Platform.isWindows
-                    ? 'Background sync not available on Windows'
+                    ? 'In-app sync (requires app to be running)'
                     : 'Automatically check for work updates',
               ),
               value: syncSettings.autoSyncEnabled,
-              onChanged: Platform.isWindows ? null : syncNotifier.setAutoSyncEnabled,
+              onChanged: syncNotifier.setAutoSyncEnabled,
             ),
             
             // Sync Interval
@@ -270,9 +663,9 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
               leading: const Icon(Icons.schedule),
               title: const Text('Sync Interval'),
               subtitle: Text(syncSettings.interval.label),
-              enabled: syncSettings.autoSyncEnabled && !Platform.isWindows,
+              enabled: syncSettings.autoSyncEnabled,
               trailing: PopupMenuButton<SyncInterval>(
-                enabled: syncSettings.autoSyncEnabled && !Platform.isWindows,
+                enabled: syncSettings.autoSyncEnabled,
                 onSelected: syncNotifier.setInterval,
                 itemBuilder: (context) => SyncInterval.values
                     .map((i) => PopupMenuItem(value: i, child: Text(i.label)))
@@ -322,7 +715,107 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             
             const Divider(),
             
-            // Reader Settings placeholder
+            // Data Management Section
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Data Management',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            
+            // Export Library
+            ListTile(
+              leading: const Icon(Icons.upload),
+              title: const Text('Export Library'),
+              subtitle: const Text('Save library to JSON file'),
+              trailing: _isExporting
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right),
+              onTap: _isExporting ? null : _exportLibrary,
+            ),
+            
+            // Import Library
+            ListTile(
+              leading: const Icon(Icons.download),
+              title: const Text('Import Library'),
+              subtitle: const Text('Load library from JSON file or data'),
+              trailing: _isImporting
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right),
+              onTap: _isImporting ? null : _importLibrary,
+            ),
+            
+            // Storage Info
+            ListTile(
+              leading: const Icon(Icons.storage),
+              title: const Text('Storage Info'),
+              subtitle: const Text('View storage usage'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _showStorageInfo,
+            ),
+            
+            const Divider(),
+            
+            // Reader Settings Section
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Reader Settings',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            
+            // Reader Mode Setting
+            Builder(
+              builder: (context) {
+                final readerMode = ref.watch(readerModeProvider);
+                final readerModeNotifier = ref.read(readerModeProvider.notifier);
+                
+                return ListTile(
+                  leading: const Icon(Icons.chrome_reader_mode),
+                  title: const Text('Default Reader Mode'),
+                  subtitle: Text(readerMode.label),
+                  trailing: PopupMenuButton<ReaderMode>(
+                    onSelected: readerModeNotifier.setMode,
+                    itemBuilder: (context) => ReaderMode.values
+                        .map((m) => PopupMenuItem(
+                          value: m, 
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(m.label),
+                              Text(
+                                m.description,
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ))
+                        .toList(),
+                  ),
+                );
+              },
+            ),
+            
+            // Font & Reader Settings
             ListTile(
               leading: const Icon(Icons.text_fields),
               title: const Text('Font & Reader Settings'),
