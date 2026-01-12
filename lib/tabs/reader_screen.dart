@@ -72,7 +72,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   
   /// Synchronous save for use in dispose - uses cached storage
   void _saveProgressSync() {
-    if (!_hasUnsavedChanges || _cachedStorage == null) return;
+    if (_cachedStorage == null) {
+      debugPrint('⚠️ Warning: Cannot save progress - storage not initialized');
+      return;
+    }
+    if (!_hasUnsavedChanges) return;
 
     final chapterAnchor = _currentChapterIndex < _chapters.length
         ? _chapters[_currentChapterIndex].anchor

@@ -61,10 +61,10 @@ class _HomeTabState extends ConsumerState<HomeTab> with WidgetsBindingObserver {
     int secondsSinceLastSave = 0;
     _usageTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        setState(() {
-          _appUsageSeconds++;
-        });
+        _appUsageSeconds++;
         secondsSinceLastSave++;
+        // Only update UI every second (the display shows seconds)
+        setState(() {});
         // Save every 30 seconds to prevent data loss
         if (secondsSinceLastSave >= 30) {
           secondsSinceLastSave = 0;
@@ -80,10 +80,19 @@ class _HomeTabState extends ConsumerState<HomeTab> with WidgetsBindingObserver {
     _saveAppUsageTime();
   }
   
+  bool _isSaving = false;
+  
   Future<void> _saveAppUsageTime() async {
-    final storage = ref.read(storageProvider);
-    await storage.settingsBox.put('app_usage_seconds', _appUsageSeconds);
-    await storage.settingsBox.put('app_usage_year', DateTime.now().year);
+    // Prevent concurrent saves
+    if (_isSaving) return;
+    _isSaving = true;
+    try {
+      final storage = ref.read(storageProvider);
+      await storage.settingsBox.put('app_usage_seconds', _appUsageSeconds);
+      await storage.settingsBox.put('app_usage_year', DateTime.now().year);
+    } finally {
+      _isSaving = false;
+    }
   }
 
   Future<void> _loadDashboardStats() async {
