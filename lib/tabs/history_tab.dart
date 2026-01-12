@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/storage_provider.dart';
+import '../services/storage_service.dart';
 import '../models/work.dart';
 import '../models/reading_progress.dart';
 import 'reader_screen.dart';
@@ -164,7 +165,7 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     return groups;
   }
 
-  Widget _buildDayGroup(BuildContext context, dynamic storage, _DayGroup group) {
+  Widget _buildDayGroup(BuildContext context, StorageService storage, _DayGroup group) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -188,7 +189,7 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     );
   }
 
-  Widget _buildHistoryTile(BuildContext context, dynamic storage, Map<String, dynamic> entry) {
+  Widget _buildHistoryTile(BuildContext context, StorageService storage, Map<String, dynamic> entry) {
     final workId = entry['workId'] as String;
     final title = entry['title'] as String;
     final author = entry['author'] as String;
