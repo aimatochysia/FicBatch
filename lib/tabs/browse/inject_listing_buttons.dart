@@ -11,7 +11,8 @@ Future<void> injectListingButtons({
   List<String> savedWorkIds = const [],
 }) async {
   final savedIdsJson = jsonEncode(savedWorkIds);
-  final js = """
+  final js =
+      """
 (function(){
   try {
     var DEBUG = true;
@@ -131,7 +132,7 @@ Future<void> injectListingButtons({
       
       // Set initial text and style based on saved status
       if (isSaved) {
-        btn.textContent='✓ Saved';
+        btn.textContent='Saved';
         btn.style.cssText = [
           'display:inline-block',
           'margin-left:12px',
