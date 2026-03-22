@@ -21,7 +21,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.32.0
+          flutter-version: 3.41.5
 
       - name: Cache Flutter dependencies
         uses: actions/cache@v4
@@ -158,7 +158,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.32.0
+          flutter-version: 3.41.5
 
       - name: Install dependencies
         run: flutter pub get
@@ -244,7 +244,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.32.0
+          flutter-version: 3.41.5
 
       - name: Install dependencies
         run: flutter pub get
@@ -287,7 +287,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.32.0
+          flutter-version: 3.41.5
       - name: Install CocoaPods
         run: |
           sudo gem install cocoapods --no-document || true
